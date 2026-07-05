@@ -24,6 +24,12 @@ class ReviseRequest(BaseModel):
     revised_content: str | None = None
 
 
+class ChapterContentRequest(BaseModel):
+    title: str | None = None
+    content: str
+    status: str = "draft"
+
+
 class StoryResponse(BaseModel):
     story: Story
 

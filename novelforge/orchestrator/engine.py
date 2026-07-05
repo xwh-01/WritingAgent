@@ -166,6 +166,36 @@ class NovelForgeEngine:
         self.bus.emit("chapter_revised", {"story_id": str(story.id), "chapter": chapter_index})
         return chapter
 
+    def update_chapter_content(
+        self,
+        chapter_index: int,
+        content: str,
+        title: str | None = None,
+        status: str = "draft",
+    ) -> Chapter:
+        story = self._require_story()
+        outline = None
+        try:
+            outline = story.get_outline(chapter_index)
+        except KeyError:
+            outline = None
+        chapter = story.chapters.get(chapter_index) or Chapter(
+            index=chapter_index,
+            title=title or (outline.title if outline else f"Chapter {chapter_index}"),
+        )
+        if title:
+            chapter.title = title
+        chapter.update_content(content, status=status, summary=chapter.summary or (outline.summary if outline else ""))
+        story.chapters[chapter_index] = chapter
+        story.current_chapter = chapter_index
+        story.status = WorkflowState.CHAPTER_DRAFT.value if status == "draft" else story.status
+        self._index_chapter(story, chapter)
+        self.longform_manager.process_new_chapter(story, chapter_index, chapter.content)
+        story.touch()
+        self.save_state()
+        self.bus.emit("chapter_updated", {"story_id": str(story.id), "chapter": chapter_index})
+        return chapter
+
     def auto_write_chapter(self, chapter_index: int) -> AutoRevisionReport:
         story = self._require_story()
         outline = story.get_outline(chapter_index)

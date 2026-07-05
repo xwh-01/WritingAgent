@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NovelForge 工作台</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="/workspace-static/workspace.css">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-row">
+                <div>
+                    <div class="brand">NovelForge</div>
+                    <div class="project-meta" id="connectionState">Ready</div>
+                </div>
+                <button class="icon-button" id="refreshStoriesBtn" title="刷新故事"><i data-lucide="refresh-cw"></i></button>
+            </div>
+
+            <form class="new-story" id="newStoryForm">
+                <input id="newTitle" name="title" placeholder="标题" autocomplete="off">
+                <textarea id="newPremise" name="premise" placeholder="故事前提"></textarea>
+                <div class="inline-fields">
+                    <input id="newGenre" name="genre" placeholder="类型" value="novel">
+                    <button type="submit"><i data-lucide="plus"></i><span>新建</span></button>
+                </div>
+            </form>
+
+            <div class="section-title">故事</div>
+            <div class="story-list" id="storyList"></div>
+
+            <div class="section-title">章节</div>
+            <div class="chapter-list" id="chapterList"></div>
+        </aside>
+
+        <main class="editor-pane">
+            <header class="editor-header">
+                <div>
+                    <div class="story-title" id="storyTitle">未选择故事</div>
+                    <div class="story-premise" id="storyPremise"></div>
+                </div>
+                <div class="toolbar">
+                    <button id="outlineBtn"><i data-lucide="list-tree"></i><span>大纲</span></button>
+                    <button id="writeBtn"><i data-lucide="pen-line"></i><span>写作</span></button>
+                    <button id="saveBtn"><i data-lucide="save"></i><span>保存</span></button>
+                    <button id="dashboardBtn"><i data-lucide="bar-chart-3"></i><span>仪表盘</span></button>
+                </div>
+            </header>
+
+            <section class="outline-strip" id="outlineStrip"></section>
+
+            <section class="document-surface">
+                <input class="chapter-title-input" id="chapterTitleInput" placeholder="章节标题">
+                <textarea class="chapter-editor" id="chapterEditor" placeholder="正文"></textarea>
+            </section>
+        </main>
+
+        <aside class="agent-pane">
+            <div class="agent-header">
+                <div>
+                    <div class="section-title compact">Agent</div>
+                    <div class="project-meta" id="activeChapterMeta">Chapter -</div>
+                </div>
+                <button class="icon-button" id="reloadStoryBtn" title="重新加载"><i data-lucide="rotate-cw"></i></button>
+            </div>
+
+            <div class="action-grid">
+                <button id="beatsBtn"><i data-lucide="git-branch"></i><span>细纲</span></button>
+                <button id="reviewBtn"><i data-lucide="search-check"></i><span>审查</span></button>
+                <button id="autoBtn"><i data-lucide="bot"></i><span>自修</span></button>
+                <button id="reportBtn"><i data-lucide="file-text"></i><span>报告</span></button>
+            </div>
+
+            <div class="status-line" id="jobStatus">Idle</div>
+
+            <section class="agent-section">
+                <h2>质量报告</h2>
+                <div id="qualityReport" class="report-block"></div>
+            </section>
+
+            <section class="agent-section">
+                <h2>长篇状态</h2>
+                <div class="metric-grid" id="longformMetrics"></div>
+            </section>
+
+            <section class="agent-section">
+                <h2>事件</h2>
+                <div class="event-log" id="eventLog"></div>
+            </section>
+        </aside>
+    </div>
+
+    <script>
+        window.NOVELFORGE_STORY_ID = "{{ story_id }}";
+    </script>
+    <script src="/workspace-static/workspace.js"></script>
+</body>
+</html>

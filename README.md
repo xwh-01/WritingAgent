@@ -57,6 +57,13 @@ uvicorn novelforge.api.main:app --reload
 http://127.0.0.1:8000/docs
 ```
 
+Web 创作工作台：
+
+```text
+http://127.0.0.1:8000/workspace/
+http://127.0.0.1:8000/workspace/?story_id=<story_id>
+```
+
 故事全景仪表盘：
 
 ```text
@@ -75,6 +82,7 @@ POST /chapters/{chapter_index}/beats?story_id=<story_id>
 POST /chapters/{chapter_index}/write?story_id=<story_id>
 POST /chapters/{chapter_index}/review?story_id=<story_id>
 PUT /chapters/{chapter_index}/revise?story_id=<story_id>
+PUT /chapters/{chapter_index}/content?story_id=<story_id>
 POST /chapters/{chapter_index}/auto-write?story_id=<story_id>
 POST /chapters/{chapter_index}/auto-write?story_id=<story_id>&background=true
 GET /chapters/auto/status?story_id=<story_id>
@@ -87,6 +95,31 @@ WebSocket /ws/{story_id}
 GET /dashboard/
 GET /dashboard/data/{story_id}
 GET /dashboard/stories
+GET /workspace/
+```
+
+## Web 创作工作台
+
+工作台是 NovelForge 的主界面，打开后可以完成：
+
+- 创建和加载故事
+- 生成章节大纲和场景细纲
+- 写作章节正文
+- 手动编辑并保存章节
+- 触发审查和自动修订
+- 查看质量报告、伏笔/事件/摘要数量
+- 跳转故事全景仪表盘
+
+启动服务：
+
+```bash
+uvicorn novelforge.api.main:app --reload
+```
+
+访问：
+
+```text
+http://127.0.0.1:8000/workspace/
 ```
 
 ## 故事全景仪表盘
@@ -194,6 +227,7 @@ DEEPSEEK_API_KEY=your_key
 - `orchestrator/`: 有限状态机和事件总线
 - `longform/`: 伏笔、因果、摘要、节奏、人物状态等长篇增强模块
 - `dashboard/`: 故事全景仪表盘的数据提供层、FastAPI 路由和前端页面
+- `workspace/`: Web 创作工作台页面、样式和前端交互
 - `storage/`: 故事仓库和自动修订报告导出
 - `api/`: FastAPI 路由
 - `cli.py`: 交互式命令行

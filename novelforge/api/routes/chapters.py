@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from fastapi.responses import PlainTextResponse
 
-from novelforge.api.schemas import ChapterResponse, ReviewResponse, ReviseRequest
+from novelforge.api.schemas import ChapterContentRequest, ChapterResponse, ReviewResponse, ReviseRequest
 from novelforge.api.state import AUTO_REVISION_JOBS, get_engine
 from novelforge.storage.repository import StoryRepository
 
@@ -53,6 +53,21 @@ def review_chapter(chapter_index: int, story_id: str = Query(...)) -> ReviewResp
 @router.put("/{chapter_index}/revise", response_model=ChapterResponse)
 def revise_chapter(chapter_index: int, payload: ReviseRequest, story_id: str = Query(...)) -> ChapterResponse:
     return ChapterResponse(chapter=get_engine(story_id).apply_revision(chapter_index, payload.revised_content))
+
+
+@router.put("/{chapter_index}/content", response_model=ChapterResponse)
+def update_chapter_content(
+    chapter_index: int,
+    payload: ChapterContentRequest,
+    story_id: str = Query(...),
+) -> ChapterResponse:
+    chapter = get_engine(story_id).update_chapter_content(
+        chapter_index,
+        content=payload.content,
+        title=payload.title,
+        status=payload.status,
+    )
+    return ChapterResponse(chapter=chapter)
 
 
 @router.post("/{chapter_index}/auto-write")
