@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from enum import StrEnum
 from pathlib import Path
+from typing import Callable
 from uuid import UUID
 
 from novelforge.agents import CriticAgent, EditorAgent, PlannerAgent, WriterAgent
@@ -258,10 +259,38 @@ class NovelForgeEngine:
         start_chapter: int,
         end_chapter: int,
         use_auto_revision: bool = True,
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> BatchWriteReport:
         if start_chapter < 1 or end_chapter < start_chapter:
             raise WorkflowError("Invalid chapter range.")
         story = self._require_story()
+        total = end_chapter - start_chapter + 1
+
+        def emit_progress(
+            message: str,
+            chapter_index: int | None = None,
+            stage: str = "working",
+            progress_current: int | None = None,
+        ) -> None:
+            if progress_callback is None:
+                return
+            progress_callback(
+                {
+                    "message": message,
+                    "chapter_index": chapter_index,
+                    "stage": stage,
+                    "progress_current": progress_current if progress_current is not None else 0,
+                    "progress_total": total,
+                    "status": "running_batch",
+                }
+            )
+
+        if len(story.outlines) < end_chapter:
+            emit_progress(
+                f"Generating outline up to chapter {end_chapter}",
+                stage="outline",
+                progress_current=0,
+            )
         self._ensure_outlines(end_chapter)
         report = BatchWriteReport(
             start_chapter=start_chapter,
@@ -270,7 +299,22 @@ class NovelForgeEngine:
         )
         for chapter_index in range(start_chapter, end_chapter + 1):
             try:
+                chapter = story.chapters.get(chapter_index)
+                if chapter is None or not chapter.beats:
+                    emit_progress(
+                        f"Chapter {chapter_index}: generating beats",
+                        chapter_index=chapter_index,
+                        stage="beats",
+                        progress_current=report.completed,
+                    )
+                    self.generate_beats(chapter_index)
                 if use_auto_revision:
+                    emit_progress(
+                        f"Chapter {chapter_index}: writing, reviewing, and revising",
+                        chapter_index=chapter_index,
+                        stage="auto_revision",
+                        progress_current=report.completed,
+                    )
                     auto_report = self.auto_write_chapter(chapter_index)
                     chapter = story.chapters[chapter_index]
                     report.results.append(
@@ -284,6 +328,12 @@ class NovelForgeEngine:
                         )
                     )
                 else:
+                    emit_progress(
+                        f"Chapter {chapter_index}: writing draft",
+                        chapter_index=chapter_index,
+                        stage="draft",
+                        progress_current=report.completed,
+                    )
                     chapter = self.write_chapter(chapter_index)
                     report.results.append(
                         BatchChapterResult(
@@ -295,8 +345,20 @@ class NovelForgeEngine:
                         )
                     )
                 report.completed += 1
+                emit_progress(
+                    f"Chapter {chapter_index}: completed",
+                    chapter_index=chapter_index,
+                    stage="completed",
+                    progress_current=report.completed,
+                )
             except Exception as exc:
                 report.failed += 1
+                emit_progress(
+                    f"Chapter {chapter_index}: failed - {exc}",
+                    chapter_index=chapter_index,
+                    stage="failed",
+                    progress_current=report.completed,
+                )
                 report.results.append(
                     BatchChapterResult(
                         chapter_index=chapter_index,

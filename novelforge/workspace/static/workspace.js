@@ -3,6 +3,7 @@ const state = {
     story: null,
     activeChapter: 1,
     activeJob: null,
+    lastJobEvents: [],
     polling: null,
 };
 
@@ -193,6 +194,16 @@ function renderEvents() {
     `).join("") : `<div class="event-row">No events</div>`;
 }
 
+function renderJobEvents(job) {
+    state.lastJobEvents = job.events || [];
+    const rows = state.lastJobEvents.slice(-12).reverse().map(event => {
+        const chapter = event.chapter_index ? `ch${event.chapter_index} · ` : "";
+        const progress = event.progress_total ? ` (${event.progress_current || 0}/${event.progress_total})` : "";
+        return `<div class="event-row">${escapeHtml(chapter)}${escapeHtml(event.message || event.stage || "Working")}${escapeHtml(progress)}</div>`;
+    });
+    els.eventLog.innerHTML = rows.length ? rows.join("") : `<div class="event-row">${escapeHtml(job.message || job.status || "Working")}</div>`;
+}
+
 async function generateOutline() {
     if (!state.story) return;
     const count = Math.max(1, Number(prompt("章节数", "10") || "10"));
@@ -264,7 +275,10 @@ async function pollJob() {
     state.polling = setInterval(async () => {
         if (!state.activeJob || !state.story) return;
         const job = await getJson(`/chapters/auto/status?story_id=${state.story.id}&job_id=${state.activeJob}`);
-        els.jobStatus.textContent = `${job.status} · progress ${job.current_round || 0}`;
+        const progressCurrent = job.progress_current ?? job.current_round ?? 0;
+        const progressTotal = job.progress_total ? `/${job.progress_total}` : "";
+        els.jobStatus.textContent = `${job.status} · ${progressCurrent}${progressTotal} · ${job.message || "Working"}`;
+        renderJobEvents(job);
         if (["passed", "failed", "stopped", "finished_with_residual_issues", "batch_finished", "batch_finished_with_failures"].includes(job.status)) {
             clearInterval(state.polling);
             if (job.result) renderReport(job.result);

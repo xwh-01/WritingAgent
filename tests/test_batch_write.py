@@ -16,13 +16,18 @@ def test_engine_batch_write_generates_multiple_chapters(test_config: AppConfig) 
     story = engine.start_new_story("一个少年成为天才门将", title="批量测试")
     engine.generate_outline(3)
 
-    report = engine.batch_write_chapters(1, 3, use_auto_revision=True)
+    events: list[dict[str, object]] = []
+
+    report = engine.batch_write_chapters(1, 3, use_auto_revision=True, progress_callback=events.append)
 
     assert report.completed == 3
     assert report.failed == 0
     assert len(story.chapters) == 3
     assert story.batch_reports
     assert all(item.word_count > 0 for item in report.results)
+    assert any(event["stage"] == "beats" for event in events)
+    assert any(event["stage"] == "auto_revision" for event in events)
+    assert events[-1]["progress_current"] == 3
 
 
 def test_batch_write_api_background_job() -> None:
@@ -39,4 +44,8 @@ def test_batch_write_api_background_job() -> None:
     )
 
     assert started.status_code == 200
-    assert started.json()["status"] in {"queued", "running_batch", "batch_finished"}
+    payload = started.json()
+    assert payload["status"] in {"queued", "running_batch", "batch_finished"}
+    assert payload["progress_total"] == 2
+    assert "message" in payload
+    assert "events" in payload
