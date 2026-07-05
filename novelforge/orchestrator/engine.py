@@ -138,7 +138,7 @@ class NovelForgeEngine:
             raise WorkflowError(f"Chapter {chapter_index} has no draft to review.")
         memories = self.vector_store.query("plot_summaries", outline.summary, k=5)
         memories.extend(self.vector_store.query("memory_cards", outline.summary, k=5))
-        longform_context = self.longform_manager.get_enhanced_context(chapter_index, story)
+        longform_context = self.longform_manager.get_enhanced_context(chapter_index, story, query=outline.summary)
         report = self.critic.review_chapter(
             chapter.content,
             outline,

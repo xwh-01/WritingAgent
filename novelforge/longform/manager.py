@@ -118,9 +118,9 @@ class LongformManager:
             return old
         return f"{old}; {new}"
 
-    def get_enhanced_context(self, chapter_index: int, story: Story) -> str:
+    def get_enhanced_context(self, chapter_index: int, story: Story, query: str = "") -> str:
         sections: list[str] = []
-        pack = self.memory_engine.build_context_pack(story, chapter_index)
+        pack = self.memory_engine.build_context_pack(story, chapter_index, query=query)
         packed_context = self.memory_engine.format_context_pack(pack)
         if packed_context.strip() != "Memory Engine v2 Context Pack":
             sections.append(packed_context)

@@ -30,16 +30,19 @@ def test_memory_engine_v2_builds_long_novel_memory() -> None:
 
 def test_memory_extractor_rules_find_character_and_world_facts() -> None:
     story = Story(title="Goalkeeper", premise="王绍康 becomes a goalkeeper.")
-    extractor = MemoryExtractorAgent(None)  # type: ignore[arg-type]
+    extractor = MemoryExtractorAgent(None)
 
+    content = "王绍康在球场训练门将扑救，他把王者荣耀后羿的预判方式用在足球上。"
     result = extractor.extract_chapter_memory(
         story,
         1,
-        "王绍康在球场训练门将扑救，他把王者荣耀后羿的预判方式用在足球上。",
+        content,
     )
+    repeated = extractor.extract_chapter_memory(story, 1, content)
 
     assert any(character.name == "王绍康" for character in result.characters)
     assert any(setting.category == "game_link" for setting in result.world_settings)
+    assert [setting.id for setting in result.world_settings] == [setting.id for setting in repeated.world_settings]
     assert result.continuity_constraints
 
 

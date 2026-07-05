@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+from hashlib import sha1
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from novelforge.agents.base import BaseAgent
 from novelforge.core.models import Character, Story, WorldSetting
+from novelforge.llm.base import LLMClient
 
 
 class ExtractedRelationship(BaseModel):
@@ -28,7 +30,13 @@ class MemoryExtractionResult(BaseModel):
 class MemoryExtractorAgent(BaseAgent):
     name = "memory_extractor"
 
+    def __init__(self, llm: LLMClient | None) -> None:
+        self.llm = llm
+
     def extract_chapter_memory(self, story: Story, chapter_index: int, content: str) -> MemoryExtractionResult:
+        if self.llm is None:
+            return self._rule_extract(story, chapter_index, content)
+
         system = (
             "You are a long-novel memory extraction agent. Extract durable continuity facts from a chapter. "
             "Return strict JSON matching this schema: "
@@ -106,7 +114,7 @@ class MemoryExtractorAgent(BaseAgent):
             if keyword.lower() in content.lower():
                 settings.append(
                     WorldSetting(
-                        id=f"world-{category}-{abs(hash(keyword + str(chapter_index))) % 100000}",
+                        id=f"world-{category}-{self._stable_digest(keyword, str(chapter_index))}",
                         category=category,
                         content=text,
                         metadata={"chapter": chapter_index, "source_keyword": keyword},
@@ -153,4 +161,8 @@ class MemoryExtractorAgent(BaseAgent):
 
     def _slug(self, value: str) -> str:
         slug = re.sub(r"\W+", "-", value.strip().lower()).strip("-")
-        return slug or f"entity-{abs(hash(value)) % 100000}"
+        return slug or f"entity-{self._stable_digest(value)}"
+
+    def _stable_digest(self, *parts: str) -> str:
+        raw = "|".join(parts).encode("utf-8")
+        return sha1(raw).hexdigest()[:10]

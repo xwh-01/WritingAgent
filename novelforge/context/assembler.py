@@ -52,7 +52,7 @@ class ContextAssembler:
             sections.append((40, f"全文检索片段: {result[:500]}"))
 
         if self.longform_manager is not None:
-            enhanced = self.longform_manager.get_enhanced_context(chapter_index, story)
+            enhanced = self.longform_manager.get_enhanced_context(chapter_index, story, query=query)
             if enhanced:
                 sections.append((88, enhanced))
 
