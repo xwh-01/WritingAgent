@@ -20,6 +20,7 @@ from novelforge.core.models import (
     MemoryCard,
     Story,
 )
+from novelforge.longform.ranker import MemoryRanker
 
 
 @dataclass
@@ -42,6 +43,7 @@ class MemoryEngineV2:
     def __init__(self, chapters_per_arc: int = 20, max_cards: int = 5000) -> None:
         self.chapters_per_arc = chapters_per_arc
         self.max_cards = max_cards
+        self.ranker = MemoryRanker()
 
     def process_chapter(
         self,
@@ -132,23 +134,8 @@ class MemoryEngineV2:
         entities: set[str] | None = None,
         limit: int = 12,
     ) -> list[MemoryCard]:
-        entities = entities or set()
-        query_terms = self._terms(query)
-        scored: list[tuple[float, MemoryCard]] = []
-        for card in story.memory_cards:
-            score = float(card.importance)
-            if card.chapter < chapter_index:
-                score += max(0.0, 4.0 - ((chapter_index - card.chapter) / 50.0))
-            if entities and entities.intersection(card.entities):
-                score += 6.0
-            if query_terms:
-                overlap = query_terms.intersection(self._terms(card.content + " " + " ".join(card.tags)))
-                score += min(6.0, len(overlap) * 1.5)
-            if card.type in {"foreshadowing", "character_state"}:
-                score += 2.0
-            scored.append((score, card))
-        scored.sort(key=lambda item: (item[0], item[1].chapter), reverse=True)
-        return [card for _, card in scored[:limit]]
+        ranked = self.ranker.rank_cards(story.memory_cards, query, chapter_index, entities=entities, limit=limit)
+        return [item.item for item in ranked]
 
     def update_arc_summary(self, story: Story, chapter_index: int) -> ArcSummary:
         arc_index = self._arc_index(chapter_index)

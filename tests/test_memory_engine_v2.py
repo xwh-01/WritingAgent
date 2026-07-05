@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from novelforge.core.models import Character, Story
 from novelforge.agents.memory_extractor import MemoryExtractorAgent
+from novelforge.core.models import Character, MemoryCard, Story
 from novelforge.llm.mock_client import MockLLMClient
 from novelforge.longform.manager import LongformManager
+from novelforge.longform.ranker import MemoryRanker
 from novelforge.orchestrator.engine import NovelForgeEngine
 
 
@@ -63,3 +64,26 @@ def test_engine_indexes_memory_cards_after_writing(test_config) -> None:
     assert engine.vector_store.query("characters", "主角 training", k=5)
     assert engine.graph_store.get_ego_network("hero", depth=1)["nodes"]
     assert "Memory Engine v2 Context Pack" in context
+    assert "score=" in context
+
+
+def test_memory_ranker_prioritizes_entity_and_foreshadowing() -> None:
+    ranker = MemoryRanker()
+    cards = [
+        MemoryCard(id="old", type="chapter_summary", content="unrelated market scene", chapter=1, importance=9),
+        MemoryCard(
+            id="hero-fs",
+            type="foreshadowing",
+            content="Wang Shaokang has an unresolved anticipation secret",
+            chapter=20,
+            importance=8,
+            entities=["hero"],
+            tags=["secret"],
+        ),
+    ]
+
+    ranked = ranker.rank_cards(cards, "Wang Shaokang anticipation", 30, entities={"hero"})
+
+    assert ranked[0].item.id == "hero-fs"
+    assert "entity" in ranked[0].reasons
+    assert "query" in ranked[0].reasons

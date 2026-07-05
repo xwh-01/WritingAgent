@@ -35,6 +35,19 @@ Before writing or reviewing a chapter, NovelForge can assemble context from:
 - NetworkX relationship graph
 - Memory Engine v2 context pack
 
+## Memory Ranker
+
+Retrieved memories are reranked before they enter the prompt. The ranker combines:
+
+- vector similarity
+- memory type priority
+- chapter recency
+- query term overlap
+- active character/entity overlap
+- explicit importance on structured memory cards
+
+This avoids stuffing every retrieved item into the prompt and makes later chapters more likely to see the most relevant continuity facts.
+
 ## Chapter Context Pack
 
 The context pack is built for one target chapter and may include:
