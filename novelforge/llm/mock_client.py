@@ -12,6 +12,36 @@ from novelforge.llm.base import LLMClient
 class MockLLMClient(LLMClient):
     def chat_completion(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         prompt = "\n".join(message.get("content", "") for message in messages)
+        if "memory_extract" in prompt:
+            return json.dumps(
+                {
+                    "characters": [
+                        {
+                            "id": "hero",
+                            "name": "主角",
+                            "age": "unknown",
+                            "appearance": "",
+                            "personality": "敏锐、在压力中成长",
+                            "motivation": "完成当前目标并保护关键线索",
+                            "weakness": "",
+                            "relationships": {},
+                            "secrets": [],
+                            "arc": "",
+                        }
+                    ],
+                    "world_settings": [
+                        {
+                            "id": "world-core-training",
+                            "category": "training",
+                            "content": "训练、比赛和关键线索会持续影响人物能力与剧情推进。",
+                            "metadata": {"source": "mock_memory_extract"},
+                        }
+                    ],
+                    "relationships": [],
+                    "continuity_constraints": ["后续章节需要保持主角目标、关键线索和训练代价的连续性。"],
+                },
+                ensure_ascii=False,
+            )
         if "quality_scorecard_review" in prompt:
             improved = "【修订稿】" in prompt or "revise_chapter_quality" in prompt
             base = 8.8 if improved else 6.4

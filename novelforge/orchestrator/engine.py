@@ -472,6 +472,9 @@ class NovelForgeEngine:
     def _process_chapter_memory(self, story: Story, chapter: Chapter) -> None:
         self._index_chapter(story, chapter)
         result = self.longform_manager.process_new_chapter(story, chapter.index, chapter.content)
+        extraction = result.get("extraction") if isinstance(result, dict) else None
+        if extraction is not None:
+            self._index_extracted_memory(extraction)
         memory = result.get("memory", {}) if isinstance(result, dict) else {}
         cards = memory.get("memory_cards", []) if isinstance(memory, dict) else []
         if not cards:
@@ -491,6 +494,45 @@ class NovelForgeEngine:
             ],
             [card.id for card in cards],
         )
+
+    def _index_extracted_memory(self, extraction) -> None:
+        characters = getattr(extraction, "characters", [])
+        if characters:
+            self.vector_store.add(
+                "characters",
+                [
+                    " ".join(
+                        part
+                        for part in [
+                            character.name,
+                            str(character.age),
+                            character.appearance,
+                            character.personality,
+                            character.motivation,
+                            character.weakness,
+                            character.arc,
+                        ]
+                        if part
+                    )
+                    for character in characters
+                ],
+                [{"type": "character", "character_id": character.id} for character in characters],
+                [f"character:{character.id}" for character in characters],
+            )
+            for character in characters:
+                self.graph_store.add_node(character.id, character.model_dump())
+
+        world_settings = getattr(extraction, "world_settings", [])
+        if world_settings:
+            self.vector_store.add(
+                "world",
+                [setting.content for setting in world_settings],
+                [{"type": "world", "category": setting.category, **setting.metadata} for setting in world_settings],
+                [f"world:{setting.id}" for setting in world_settings],
+            )
+
+        for relation in getattr(extraction, "relationships", []):
+            self.graph_store.add_edge(relation.source, relation.target, relation.relation)
 
     def _require_story(self) -> Story:
         if self.story is None:

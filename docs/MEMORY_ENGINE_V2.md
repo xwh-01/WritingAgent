@@ -7,6 +7,22 @@ NovelForge now includes a long-novel memory layer designed for 1000-chapter scal
 - `memory_cards`: durable retrieval units for chapter summaries, causal events, foreshadowing, and character states.
 - `arc_summaries`: rolling 20-chapter arc summaries for medium-range continuity.
 - `story_bible`: global premise, active threads, character roster, current direction, and continuity constraints.
+- `characters`: automatically maintained character registry.
+- `world_settings`: automatically maintained world and rule registry.
+- `relationships.json`: graph-backed character relationship memory.
+
+## Memory Extractor Agent
+
+After a chapter is written or revised, `MemoryExtractorAgent` extracts:
+
+- new or updated characters
+- world facts and rule settings
+- relationship changes
+- continuity constraints
+
+The extracted facts are applied to the Story model, indexed into Chroma `characters` and `world`
+collections, and written into the NetworkX relationship graph. This turns each generated chapter into
+structured memory, not just prose.
 
 ## Retrieval Sources
 

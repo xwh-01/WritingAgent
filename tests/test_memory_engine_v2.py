@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from novelforge.core.models import Character, Story
+from novelforge.agents.memory_extractor import MemoryExtractorAgent
 from novelforge.llm.mock_client import MockLLMClient
 from novelforge.longform.manager import LongformManager
 from novelforge.orchestrator.engine import NovelForgeEngine
@@ -27,6 +28,21 @@ def test_memory_engine_v2_builds_long_novel_memory() -> None:
     assert "Retrieved Memory Cards" in context
 
 
+def test_memory_extractor_rules_find_character_and_world_facts() -> None:
+    story = Story(title="Goalkeeper", premise="王绍康 becomes a goalkeeper.")
+    extractor = MemoryExtractorAgent(None)  # type: ignore[arg-type]
+
+    result = extractor.extract_chapter_memory(
+        story,
+        1,
+        "王绍康在球场训练门将扑救，他把王者荣耀后羿的预判方式用在足球上。",
+    )
+
+    assert any(character.name == "王绍康" for character in result.characters)
+    assert any(setting.category == "game_link" for setting in result.world_settings)
+    assert result.continuity_constraints
+
+
 def test_engine_indexes_memory_cards_after_writing(test_config) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("A long sports saga.", title="Memory Index")
@@ -38,5 +54,9 @@ def test_engine_indexes_memory_cards_after_writing(test_config) -> None:
 
     assert story.memory_cards
     assert story.arc_summaries
+    assert story.characters
+    assert story.world_settings
     assert retrieved
+    assert engine.vector_store.query("characters", "主角 training", k=5)
+    assert engine.graph_store.get_ego_network("hero", depth=1)["nodes"]
     assert "Memory Engine v2 Context Pack" in context

@@ -201,7 +201,8 @@ class MemoryEngineV2:
                 state = f"ch{current.chapter}: {current.emotional_state}; {current.location}"
             bible.character_roster[character_id] = self._compress(f"{character.name} {state}".strip(), 240)
         bible.continuity_constraints = self._dedupe(
-            [f"Keep foreshadowing open until resolved: {item.id} {item.description}" for item in story.foreshadowings if item.status == "pending"][-20:]
+            bible.continuity_constraints
+            + [f"Keep foreshadowing open until resolved: {item.id} {item.description}" for item in story.foreshadowings if item.status == "pending"][-20:]
             + [f"Respect latest state of {cid}: {states[-1].emotional_state}, {states[-1].location}" for cid, states in story.character_states.items() if states]
         )[:30]
         bible.updated_at = datetime.now(timezone.utc)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from novelforge.agents.memory_extractor import MemoryExtractionResult, MemoryExtractorAgent
 from novelforge.core.models import CharacterState, Foreshadowing, Story
 from novelforge.llm.base import LLMClient
 from novelforge.longform.causality import CausalityTracker
@@ -19,6 +20,7 @@ class LongformManager:
     def __init__(self, llm: LLMClient | None = None) -> None:
         self.foreshadowing_tracker = ForeshadowingTracker(llm)
         self.causality_tracker = CausalityTracker(llm)
+        self.memory_extractor = MemoryExtractorAgent(llm)
         self.summary_manager = SummaryManager(llm)
         self.memory_engine = MemoryEngineV2()
         self.pacing_analyzer = PacingAnalyzer()
@@ -27,6 +29,8 @@ class LongformManager:
         self.pacing_warnings: dict[str, str] = {}
 
     def process_new_chapter(self, story: Story, chapter_index: int, content: str) -> dict[str, Any]:
+        extraction = self.memory_extractor.extract_chapter_memory(story, chapter_index, content)
+        self._apply_extraction(story, extraction)
         summary = self.summary_manager.generate_chapter_summary(story, chapter_index, content)
         events = self.causality_tracker.extract_events_from_chapter(story, chapter_index, content)
         summary.key_events = [event.id for event in events]
@@ -60,8 +64,59 @@ class LongformManager:
             "character_states": states,
             "pacing": pacing,
             "pacing_warning": warning,
+            "extraction": extraction,
             "memory": memory,
         }
+
+    def _apply_extraction(self, story: Story, extraction: MemoryExtractionResult) -> None:
+        for character in extraction.characters:
+            existing = story.characters.get(character.id)
+            if existing is None:
+                story.characters[character.id] = character
+                continue
+            if character.name:
+                existing.name = character.name
+            if character.age != "unknown":
+                existing.age = character.age
+            if character.appearance:
+                existing.appearance = character.appearance
+            if character.personality:
+                existing.personality = self._merge_text(existing.personality, character.personality)
+            if character.motivation:
+                existing.motivation = character.motivation
+            if character.weakness:
+                existing.weakness = character.weakness
+            existing.relationships.update(character.relationships)
+            for secret in character.secrets:
+                if secret not in existing.secrets:
+                    existing.secrets.append(secret)
+            if character.arc:
+                existing.arc = self._merge_text(existing.arc, character.arc)
+
+        existing_world = {(item.category, item.content) for item in story.world_settings}
+        for setting in extraction.world_settings:
+            key = (setting.category, setting.content)
+            if key not in existing_world:
+                story.world_settings.append(setting)
+                existing_world.add(key)
+
+        for relation in extraction.relationships:
+            source = story.characters.get(relation.source)
+            target = story.characters.get(relation.target)
+            if source and target:
+                source.relationships[target.id] = relation.relation
+                target.relationships.setdefault(source.id, relation.relation)
+
+        for constraint in extraction.continuity_constraints:
+            if constraint not in story.story_bible.continuity_constraints:
+                story.story_bible.continuity_constraints.append(constraint)
+
+    def _merge_text(self, old: str, new: str) -> str:
+        if not old:
+            return new
+        if new in old:
+            return old
+        return f"{old}; {new}"
 
     def get_enhanced_context(self, chapter_index: int, story: Story) -> str:
         sections: list[str] = []
