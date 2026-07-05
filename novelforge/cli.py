@@ -274,6 +274,22 @@ class NovelForgeShell(cmd2.Cmd):
         result = self.engine.auto_write_chapter(chapter_index)
         self._print_auto_report(result)
 
+    def do_batch_write(self, line: str) -> None:
+        """batch-write <start> <end> [draft] -- generate many chapters in one run."""
+        parts = shlex.split(line)
+        if len(parts) < 2:
+            print("Usage: /batch-write <start> <end> [draft]")
+            return
+        start = int(parts[0])
+        end = int(parts[1])
+        use_auto = not (len(parts) > 2 and parts[2].lower() == "draft")
+        print(f"Batch writing chapters {start}-{end} ({'auto-revision' if use_auto else 'draft only'})...")
+        report = self.engine.batch_write_chapters(start, end, use_auto)
+        print(f"Completed {report.completed}, failed {report.failed}")
+        for item in report.results:
+            score = f" score={item.auto_revision_score:.2f}" if item.auto_revision_score is not None else ""
+            print(f"  ch{item.chapter_index}: {item.status}{score} {item.title} ({item.word_count} chars)")
+
     def do_auto_status(self, line: str) -> None:
         """auto-status -- show autonomous revision status."""
         status = self.engine.get_auto_status()
@@ -401,6 +417,7 @@ def main() -> int:
             "  /summary update|show\n"
             "  /dashboard\n"
             "  /auto-write <n>\n"
+            "  /batch-write <start> <end> [draft]\n"
             "  /auto-status\n"
             "  /auto-stop\n"
             "  /report <n> [export]\n"

@@ -146,6 +146,25 @@ class AutoRevisionReport(BaseModel):
     stopped: bool = False
 
 
+class BatchChapterResult(BaseModel):
+    chapter_index: int
+    status: str
+    title: str = ""
+    word_count: int = 0
+    auto_revision_score: float | None = None
+    message: str = ""
+
+
+class BatchWriteReport(BaseModel):
+    start_chapter: int
+    end_chapter: int
+    use_auto_revision: bool = True
+    results: list[BatchChapterResult] = Field(default_factory=list)
+    completed: int = 0
+    failed: int = 0
+    stopped: bool = False
+
+
 class Foreshadowing(BaseModel):
     id: str
     description: str
@@ -201,6 +220,7 @@ class Story(BaseModel):
     chapter_summaries: dict[int, ChapterSummary] = Field(default_factory=dict)
     volume_summaries: list[VolumeSummary] = Field(default_factory=list)
     auto_revision_reports: dict[int, AutoRevisionReport] = Field(default_factory=dict)
+    batch_reports: list[BatchWriteReport] = Field(default_factory=list)
     current_chapter: int = 0
     status: str = "planning"
     created_at: datetime = Field(default_factory=utc_now)

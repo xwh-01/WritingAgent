@@ -20,6 +20,13 @@ class OutlineRequest(BaseModel):
     num_chapters: int | None = None
 
 
+class BatchWriteRequest(BaseModel):
+    start_chapter: int
+    end_chapter: int
+    use_auto_revision: bool = True
+    background: bool = True
+
+
 class ReviseRequest(BaseModel):
     revised_content: str | None = None
 

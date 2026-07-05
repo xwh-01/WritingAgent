@@ -23,7 +23,7 @@ function bindElements() {
     for (const id of [
         "connectionState", "refreshStoriesBtn", "newStoryForm", "newTitle", "newPremise", "newGenre",
         "storyList", "chapterList", "storyTitle", "storyPremise", "outlineBtn", "writeBtn", "saveBtn",
-        "dashboardBtn", "outlineStrip", "chapterTitleInput", "chapterEditor", "reloadStoryBtn",
+        "batchBtn", "dashboardBtn", "outlineStrip", "chapterTitleInput", "chapterEditor", "reloadStoryBtn",
         "beatsBtn", "reviewBtn", "autoBtn", "reportBtn", "jobStatus", "qualityReport",
         "longformMetrics", "eventLog", "activeChapterMeta",
     ]) {
@@ -37,6 +37,7 @@ function bindEvents() {
     els.newStoryForm.addEventListener("submit", createStory);
     els.outlineBtn.addEventListener("click", generateOutline);
     els.writeBtn.addEventListener("click", writeChapter);
+    els.batchBtn.addEventListener("click", batchWrite);
     els.saveBtn.addEventListener("click", saveChapter);
     els.dashboardBtn.addEventListener("click", openDashboard);
     els.beatsBtn.addEventListener("click", generateBeats);
@@ -214,6 +215,23 @@ async function writeChapter() {
     await loadStory(state.story.id);
 }
 
+async function batchWrite() {
+    if (!state.story) return;
+    const start = Number(prompt("起始章节", String(state.activeChapter)) || state.activeChapter);
+    const end = Number(prompt("结束章节", String(Math.max(start, start + 2))) || start);
+    const useAuto = confirm("是否启用自动审查修订？点“确定”为自动修订，点“取消”为只写草稿。");
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return;
+    setStatus(`Batch ${start}-${end}`);
+    const job = await postJson(`/stories/${state.story.id}/batch-write`, {
+        start_chapter: start,
+        end_chapter: end,
+        use_auto_revision: useAuto,
+        background: true,
+    });
+    state.activeJob = job.id;
+    pollJob();
+}
+
 async function saveChapter() {
     if (!state.story) return;
     setStatus("Saving");
@@ -246,13 +264,25 @@ async function pollJob() {
     state.polling = setInterval(async () => {
         if (!state.activeJob || !state.story) return;
         const job = await getJson(`/chapters/auto/status?story_id=${state.story.id}&job_id=${state.activeJob}`);
-        els.jobStatus.textContent = `${job.status} · round ${job.current_round || 0}`;
-        if (["passed", "failed", "stopped", "finished_with_residual_issues"].includes(job.status)) {
+        els.jobStatus.textContent = `${job.status} · progress ${job.current_round || 0}`;
+        if (["passed", "failed", "stopped", "finished_with_residual_issues", "batch_finished", "batch_finished_with_failures"].includes(job.status)) {
             clearInterval(state.polling);
             if (job.result) renderReport(job.result);
+            if (job.batch_result) renderBatchResult(job.batch_result);
             await loadStory(state.story.id);
         }
     }, 1200);
+}
+
+function renderBatchResult(report) {
+    const rows = [
+        `<div class="score-row"><strong>${report.completed}</strong> completed · ${report.failed} failed · ch${report.start_chapter}-${report.end_chapter}</div>`
+    ];
+    for (const item of report.results || []) {
+        const score = item.auto_revision_score == null ? "" : ` · score ${Number(item.auto_revision_score).toFixed(2)}`;
+        rows.push(`<div class="event-row">ch${item.chapter_index}: ${escapeHtml(item.status)}${score} · ${escapeHtml(item.title || item.message || "")}</div>`);
+    }
+    els.qualityReport.innerHTML = rows.join("");
 }
 
 async function loadReport() {

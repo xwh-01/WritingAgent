@@ -18,20 +18,22 @@
                 <button class="icon-button" id="refreshStoriesBtn" title="刷新故事"><i data-lucide="refresh-cw"></i></button>
             </div>
 
-            <form class="new-story" id="newStoryForm">
-                <input id="newTitle" name="title" placeholder="标题" autocomplete="off">
-                <textarea id="newPremise" name="premise" placeholder="故事前提"></textarea>
-                <div class="inline-fields">
-                    <input id="newGenre" name="genre" placeholder="类型" value="novel">
-                    <button type="submit"><i data-lucide="plus"></i><span>新建</span></button>
-                </div>
-            </form>
+            <div class="sidebar-content">
+                <form class="new-story" id="newStoryForm">
+                    <input id="newTitle" name="title" placeholder="标题" autocomplete="off">
+                    <textarea id="newPremise" name="premise" placeholder="故事前提"></textarea>
+                    <div class="inline-fields">
+                        <input id="newGenre" name="genre" placeholder="类型" value="novel">
+                        <button type="submit"><i data-lucide="plus"></i><span>新建</span></button>
+                    </div>
+                </form>
 
-            <div class="section-title">故事</div>
-            <div class="story-list" id="storyList"></div>
+                <div class="section-title">故事</div>
+                <div class="story-list" id="storyList"></div>
 
-            <div class="section-title">章节</div>
-            <div class="chapter-list" id="chapterList"></div>
+                <div class="section-title">章节</div>
+                <div class="chapter-list" id="chapterList"></div>
+            </div>
         </aside>
 
         <main class="editor-pane">
@@ -43,6 +45,7 @@
                 <div class="toolbar">
                     <button id="outlineBtn"><i data-lucide="list-tree"></i><span>大纲</span></button>
                     <button id="writeBtn"><i data-lucide="pen-line"></i><span>写作</span></button>
+                    <button id="batchBtn"><i data-lucide="files"></i><span>批量</span></button>
                     <button id="saveBtn"><i data-lucide="save"></i><span>保存</span></button>
                     <button id="dashboardBtn"><i data-lucide="bar-chart-3"></i><span>仪表盘</span></button>
                 </div>
@@ -74,20 +77,22 @@
 
             <div class="status-line" id="jobStatus">Idle</div>
 
-            <section class="agent-section">
-                <h2>质量报告</h2>
-                <div id="qualityReport" class="report-block"></div>
-            </section>
+            <div class="agent-pane-content">
+                <section class="agent-section">
+                    <h2>质量报告</h2>
+                    <div id="qualityReport" class="report-block"></div>
+                </section>
 
-            <section class="agent-section">
-                <h2>长篇状态</h2>
-                <div class="metric-grid" id="longformMetrics"></div>
-            </section>
+                <section class="agent-section">
+                    <h2>长篇状态</h2>
+                    <div class="metric-grid" id="longformMetrics"></div>
+                </section>
 
-            <section class="agent-section">
-                <h2>事件</h2>
-                <div class="event-log" id="eventLog"></div>
-            </section>
+                <section class="agent-section">
+                    <h2>事件</h2>
+                    <div class="event-log" id="eventLog"></div>
+                </section>
+            </div>
         </aside>
     </div>
 

@@ -14,6 +14,7 @@ def test_workspace_page_and_static_assets_render() -> None:
 
     assert page.status_code == 200
     assert "NovelForge 工作台" in page.text
+    assert "批量" in page.text
     assert script.status_code == 200
     assert style.status_code == 200
 

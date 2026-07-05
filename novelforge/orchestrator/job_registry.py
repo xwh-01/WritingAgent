@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from novelforge.core.models import AutoRevisionReport
+from novelforge.core.models import AutoRevisionReport, BatchWriteReport
 
 
 @dataclass
@@ -19,6 +19,7 @@ class AutoRevisionJob:
     status: str = "queued"
     current_round: int = 0
     result: AutoRevisionReport | None = None
+    batch_result: BatchWriteReport | None = None
     error: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -34,6 +35,7 @@ class AutoRevisionJob:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "result": self.result.model_dump() if self.result else None,
+            "batch_result": self.batch_result.model_dump() if self.batch_result else None,
         }
 
 
@@ -48,6 +50,31 @@ class AutoRevisionJobRegistry:
         with self._lock:
             self._jobs[job.id] = job
         thread = threading.Thread(target=self._run, args=(job.id, engine), daemon=True)
+        with self._lock:
+            self._threads[job.id] = thread
+        thread.start()
+        return job
+
+    def start_batch(
+        self,
+        engine,
+        story_id: str,
+        start_chapter: int,
+        end_chapter: int,
+        use_auto_revision: bool = True,
+    ) -> AutoRevisionJob:
+        job = AutoRevisionJob(
+            id=f"job-{uuid4().hex[:10]}",
+            story_id=story_id,
+            chapter_index=start_chapter,
+        )
+        with self._lock:
+            self._jobs[job.id] = job
+        thread = threading.Thread(
+            target=self._run_batch,
+            args=(job.id, engine, start_chapter, end_chapter, use_auto_revision),
+            daemon=True,
+        )
         with self._lock:
             self._threads[job.id] = thread
         thread.start()
@@ -83,11 +110,28 @@ class AutoRevisionJobRegistry:
         except Exception as exc:
             self._update(job_id, status="failed", error=str(exc))
 
+    def _run_batch(
+        self,
+        job_id: str,
+        engine,
+        start_chapter: int,
+        end_chapter: int,
+        use_auto_revision: bool,
+    ) -> None:
+        try:
+            self._update(job_id, status="running_batch")
+            result = engine.batch_write_chapters(start_chapter, end_chapter, use_auto_revision)
+            status = "batch_finished" if result.failed == 0 else "batch_finished_with_failures"
+            self._update(job_id, status=status, batch_result=result, current_round=result.completed)
+        except Exception as exc:
+            self._update(job_id, status="failed", error=str(exc))
+
     def _update(
         self,
         job_id: str,
         status: str | None = None,
         result: AutoRevisionReport | None = None,
+        batch_result: BatchWriteReport | None = None,
         current_round: int | None = None,
         error: str | None = None,
     ) -> None:
@@ -97,6 +141,8 @@ class AutoRevisionJobRegistry:
                 job.status = status
             if result is not None:
                 job.result = result
+            if batch_result is not None:
+                job.batch_result = batch_result
             if current_round is not None:
                 job.current_round = current_round
             if error is not None:

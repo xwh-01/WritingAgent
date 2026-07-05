@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from novelforge.api.schemas import CreateStoryRequest, OutlineRequest, OutlineResponse, StatusResponse, StoryResponse
-from novelforge.api.state import ENGINES, get_engine
+from novelforge.api.schemas import BatchWriteRequest, CreateStoryRequest, OutlineRequest, OutlineResponse, StatusResponse, StoryResponse
+from novelforge.api.state import AUTO_REVISION_JOBS, ENGINES, get_engine
 from novelforge.orchestrator.engine import NovelForgeEngine
 
 router = APIRouter(prefix="/stories", tags=["stories"])
@@ -34,6 +34,25 @@ def get_story(story_id: str) -> StoryResponse:
 def generate_outline(story_id: str, payload: OutlineRequest) -> OutlineResponse:
     engine = get_engine(story_id)
     return OutlineResponse(outlines=engine.generate_outline(payload.num_chapters))
+
+
+@router.post("/{story_id}/batch-write")
+def batch_write(story_id: str, payload: BatchWriteRequest) -> dict:
+    engine = get_engine(story_id)
+    if payload.background:
+        job = AUTO_REVISION_JOBS.start_batch(
+            engine,
+            story_id,
+            payload.start_chapter,
+            payload.end_chapter,
+            payload.use_auto_revision,
+        )
+        return job.to_dict()
+    return engine.batch_write_chapters(
+        payload.start_chapter,
+        payload.end_chapter,
+        payload.use_auto_revision,
+    ).model_dump()
 
 
 @router.get("/{story_id}/status", response_model=StatusResponse)

@@ -11,7 +11,14 @@ from novelforge.agents import CriticAgent, EditorAgent, PlannerAgent, WriterAgen
 from novelforge.context.assembler import ContextAssembler
 from novelforge.core.config import AppConfig, load_config
 from novelforge.core.exceptions import PersistenceError, WorkflowError
-from novelforge.core.models import AutoRevisionReport, Chapter, ReviewReport, Story
+from novelforge.core.models import (
+    AutoRevisionReport,
+    BatchChapterResult,
+    BatchWriteReport,
+    Chapter,
+    ReviewReport,
+    Story,
+)
 from novelforge.llm import build_llm_client
 from novelforge.longform.manager import LongformManager
 from novelforge.memory.graph_store import NetworkXGraphStore
@@ -246,6 +253,72 @@ class NovelForgeEngine:
         )
         return result
 
+    def batch_write_chapters(
+        self,
+        start_chapter: int,
+        end_chapter: int,
+        use_auto_revision: bool = True,
+    ) -> BatchWriteReport:
+        if start_chapter < 1 or end_chapter < start_chapter:
+            raise WorkflowError("Invalid chapter range.")
+        story = self._require_story()
+        self._ensure_outlines(end_chapter)
+        report = BatchWriteReport(
+            start_chapter=start_chapter,
+            end_chapter=end_chapter,
+            use_auto_revision=use_auto_revision,
+        )
+        for chapter_index in range(start_chapter, end_chapter + 1):
+            try:
+                if use_auto_revision:
+                    auto_report = self.auto_write_chapter(chapter_index)
+                    chapter = story.chapters[chapter_index]
+                    report.results.append(
+                        BatchChapterResult(
+                            chapter_index=chapter_index,
+                            status="passed" if auto_report.passed else "reviewed",
+                            title=chapter.title,
+                            word_count=len(chapter.content),
+                            auto_revision_score=auto_report.final_score,
+                            message=f"{len(auto_report.rounds)} auto-revision rounds",
+                        )
+                    )
+                else:
+                    chapter = self.write_chapter(chapter_index)
+                    report.results.append(
+                        BatchChapterResult(
+                            chapter_index=chapter_index,
+                            status=chapter.status,
+                            title=chapter.title,
+                            word_count=len(chapter.content),
+                            message="draft generated",
+                        )
+                    )
+                report.completed += 1
+            except Exception as exc:
+                report.failed += 1
+                report.results.append(
+                    BatchChapterResult(
+                        chapter_index=chapter_index,
+                        status="failed",
+                        message=str(exc),
+                    )
+                )
+        story.batch_reports.append(report)
+        story.touch()
+        self.save_state()
+        self.bus.emit(
+            "batch_write_finished",
+            {
+                "story_id": str(story.id),
+                "start": start_chapter,
+                "end": end_chapter,
+                "completed": report.completed,
+                "failed": report.failed,
+            },
+        )
+        return report
+
     def get_auto_status(self) -> dict[str, object]:
         if self.current_auto_revisor is None:
             return {"status": self.auto_status, "round": 0, "stop_requested": False}
@@ -284,6 +357,15 @@ class NovelForgeEngine:
             self.save_state()
             raise WorkflowError("Story is completed; no next chapter exists.")
         return self.generate_beats(next_index)
+
+    def _ensure_outlines(self, end_chapter: int) -> None:
+        story = self._require_story()
+        if len(story.outlines) >= end_chapter:
+            return
+        story.outlines = self.planner.generate_outline(story.premise, end_chapter)
+        story.status = WorkflowState.OUTLINE_GENERATED.value
+        story.touch()
+        self.save_state()
 
     def save_state(self) -> Path:
         story = self._require_story()
