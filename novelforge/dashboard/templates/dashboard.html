@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NovelForge 故事全景仪表盘</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+    <header class="topbar">
+        <div>
+            <p class="eyebrow">NovelForge Dashboard</p>
+            <h1 id="storyTitle">故事全景仪表盘</h1>
+            <p id="storyPremise">选择一个故事，查看伏笔、因果、角色状态和章节节奏。</p>
+        </div>
+        <div class="story-picker">
+            <label for="storySelector">故事</label>
+            <select id="storySelector"></select>
+        </div>
+    </header>
+
+    <main>
+        <section class="overview-grid" id="overviewCards"></section>
+
+        <section class="panel full-width">
+            <div class="panel-heading">
+                <h2>伏笔追踪</h2>
+                <span id="foreshadowSummary" class="panel-note"></span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>描述</th>
+                            <th>创建章</th>
+                            <th>计划回收</th>
+                            <th>状态</th>
+                            <th>备注</th>
+                        </tr>
+                    </thead>
+                    <tbody id="foreshadowTable"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="dashboard-grid">
+            <article class="panel">
+                <div class="panel-heading">
+                    <h2>角色状态时间轴</h2>
+                    <select id="charSelector" aria-label="选择角色"></select>
+                </div>
+                <div id="characterChart" class="chart"></div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-heading">
+                    <h2>章节节奏</h2>
+                    <span class="panel-note">冲突、对话、行动</span>
+                </div>
+                <div id="pacingChart" class="chart"></div>
+            </article>
+        </section>
+
+        <section class="panel full-width">
+            <div class="panel-heading">
+                <h2>质量闭环趋势</h2>
+                <span class="panel-note">自动审查每轮评分</span>
+            </div>
+            <div id="qualityChart" class="chart"></div>
+        </section>
+
+        <section class="panel full-width">
+            <div class="panel-heading">
+                <h2>事件因果链</h2>
+                <span id="causalitySummary" class="panel-note"></span>
+            </div>
+            <div id="causalityChart" class="chart graph-chart"></div>
+        </section>
+    </main>
+
+    <div id="emptyState" class="empty-state" hidden>
+        <h2>还没有可显示的故事</h2>
+        <p>先在 CLI 中创建或加载故事，写作至少一章后再刷新仪表盘。</p>
+    </div>
+
+    <script>
+        window.NOVELFORGE_STORY_ID = "{{ story_id }}";
+    </script>
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>

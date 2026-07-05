@@ -1,0 +1,32 @@
+llm:
+  provider: mock
+  model: deepseek-chat
+  temperature: 0.8
+  max_tokens: 4096
+  base_url: https://api.deepseek.com
+
+memory:
+  vector_store: chroma
+  graph_store: networkx
+  text_store: sqlite_fts
+  persist_directory: ./novelforge/storage/chroma_data
+  graph_directory: ./novelforge/storage/graph_data
+  sqlite_path: ./novelforge/storage/story_state/fts.sqlite3
+
+story:
+  default_chapters: 10
+  max_context_tokens: 6000
+  history_limit: 20
+
+logging:
+  level: INFO
+
+auto_revisor:
+  max_rounds: 5
+  pass_threshold: 8.5
+  quality_weights:
+    logic_consistency: 0.25
+    character_fidelity: 0.25
+    foreshadowing_handling: 0.20
+    pacing: 0.15
+    style_uniformity: 0.15

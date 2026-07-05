@@ -1,0 +1,225 @@
+# NovelForge
+
+NovelForge 是一个面向长篇小说创作的半自动 Agent 引擎，支持多智能体协作、分层记忆、工作流编排、版本控制、CLI 和 REST API。
+
+当前版本提供一个可运行的 MVP：即使没有 DeepSeek API key，也能通过 `mock` LLM 完整走通“规划 -> 细纲 -> 写作 -> 审查 -> 修改”的核心流程。
+
+新增长篇增强子系统：
+
+- 伏笔管理器：追踪 pending / fulfilled / abandoned 状态和计划回收章节
+- 因果事件图：记录重大事件的前因后果，检查未来前因、因果循环等问题
+- 分层滚动记忆：生成场景摘要、章摘要、卷摘要，并在写作上下文中注入最近摘要
+- 节奏分析器：估算冲突强度、对话占比、描写密度、情节推进量
+- 人物状态机：跟踪角色每章后的情绪、位置、知识变化和关系变化
+
+## 安装
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+## 快速开始
+
+```bash
+python -m novelforge
+```
+
+交互式命令示例：
+
+```text
+/new_story 一个失忆铸剑师发现自己曾经锻造过弑神之刃
+/outline 3
+/beats 1
+/write 1
+/review 1
+/revise 1
+/show 1
+/foreshadowing list
+/pacing check
+/summary show
+/dashboard
+/auto-write 1
+/report 1
+/export markdown
+```
+
+## REST API
+
+```bash
+uvicorn novelforge.api.main:app --reload
+```
+
+打开 API 文档：
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+故事全景仪表盘：
+
+```text
+http://127.0.0.1:8000/dashboard/
+http://127.0.0.1:8000/dashboard/?story_id=<story_id>
+```
+
+主要端点：
+
+```text
+POST /stories/
+GET /stories/{story_id}/
+POST /stories/{story_id}/outline
+GET /chapters/{chapter_index}/?story_id=<story_id>
+POST /chapters/{chapter_index}/beats?story_id=<story_id>
+POST /chapters/{chapter_index}/write?story_id=<story_id>
+POST /chapters/{chapter_index}/review?story_id=<story_id>
+PUT /chapters/{chapter_index}/revise?story_id=<story_id>
+POST /chapters/{chapter_index}/auto-write?story_id=<story_id>
+POST /chapters/{chapter_index}/auto-write?story_id=<story_id>&background=true
+GET /chapters/auto/status?story_id=<story_id>
+GET /chapters/auto/status?story_id=<story_id>&job_id=<job_id>
+POST /chapters/auto/stop?story_id=<story_id>
+POST /chapters/auto/stop?story_id=<story_id>&job_id=<job_id>
+GET /chapters/{chapter_index}/report?story_id=<story_id>
+GET /chapters/{chapter_index}/report.md?story_id=<story_id>
+WebSocket /ws/{story_id}
+GET /dashboard/
+GET /dashboard/data/{story_id}
+GET /dashboard/stories
+```
+
+## 故事全景仪表盘
+
+启动 API：
+
+```bash
+uvicorn novelforge.api.main:app --reload
+```
+
+打开 `/dashboard/` 后可以选择本地故事状态文件。仪表盘包含：
+
+- 伏笔追踪表：显示待回收、已回收、逾期伏笔
+- 角色状态时间轴：展示角色情绪和位置变化
+- 章节节奏图：展示冲突强度、对话密度和行动密度
+- 事件因果链：以力导向图展示事件节点和因果边
+
+CLI 也提供摘要：
+
+```text
+/dashboard
+```
+
+## 自主审查修复闭环
+
+NovelForge 支持“写作 -> 多轮审查 -> 自动修订 -> 再审查 -> 生成报告”的闭环：
+
+```text
+/auto-write <chapter>
+/auto-status
+/auto-stop
+/report <chapter>
+/report <chapter> export
+```
+
+每轮都会生成质量评分卡：
+
+- 逻辑一致性
+- 人设忠实度
+- 伏笔处理
+- 叙事节奏
+- 风格统一
+
+最终报告会记录每轮评分、发现的问题、修改摘要、最终分数和残留问题。Dashboard 的“质量闭环趋势”也会显示自动审查每轮得分。
+
+API 支持后台任务模式，适合长时间运行：
+
+```text
+POST /chapters/1/auto-write?story_id=<story_id>&background=true
+GET /chapters/auto/status?story_id=<story_id>&job_id=<job_id>
+POST /chapters/auto/stop?story_id=<story_id>&job_id=<job_id>
+```
+
+自动修订报告可以导出为 Markdown，作为“漏洞发现与修复”的可展示产物：
+
+```text
+/report 1 export
+GET /chapters/1/report.md?story_id=<story_id>
+```
+
+## 架构
+
+```text
+CLI / FastAPI
+      |
+NovelForgeEngine
+      |
+PlannerAgent -> WriterAgent -> CriticAgent -> EditorAgent
+      |
+ContextAssembler
+      |
+VectorStore / GraphStore / SQLiteFTS
+      |
+LLMClient: mock / deepseek
+```
+
+## 配置
+
+默认配置在 `config.yaml`。环境变量可以覆盖关键项：
+
+```text
+NOVELFORGE_LLM_PROVIDER=mock
+DEEPSEEK_API_KEY=
+NOVELFORGE_CHROMA_DIR=./novelforge/storage/chroma_data
+NOVELFORGE_GRAPH_DIR=./novelforge/storage/graph_data
+NOVELFORGE_SQLITE_PATH=./novelforge/storage/story_state/fts.sqlite3
+```
+
+要使用 DeepSeek：
+
+```text
+NOVELFORGE_LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_key
+```
+
+## 开发说明
+
+模块边界：
+
+- `core/`: Pydantic 数据模型、配置、异常
+- `llm/`: 大模型适配层
+- `agents/`: Planner、Writer、Critic、Editor
+- `memory/`: Chroma、NetworkX、SQLite FTS 抽象与实现
+- `context/`: 写作上下文组装器
+- `orchestrator/`: 有限状态机和事件总线
+- `longform/`: 伏笔、因果、摘要、节奏、人物状态等长篇增强模块
+- `dashboard/`: 故事全景仪表盘的数据提供层、FastAPI 路由和前端页面
+- `storage/`: 故事仓库和自动修订报告导出
+- `api/`: FastAPI 路由
+- `cli.py`: 交互式命令行
+
+## 长篇命令
+
+```text
+/foreshadowing list
+/foreshadowing add <created_chapter> "伏笔描述" [target_chapter]
+/causality show [event_id]
+/pacing check
+/state <character_id_or_name>
+/summary update
+/summary show
+/dashboard
+/auto-write <chapter>
+/auto-status
+/auto-stop
+/report <chapter> [export]
+/stories
+```
+
+章节写作、修订和定稿时会自动调用长篇管理器，更新章节摘要、因果事件、伏笔、人物状态和节奏指标。后续章节写作时，`ContextAssembler` 会把上一章摘要、当前卷概览、未回收伏笔和角色当前状态注入上下文。
+
+运行测试：
+
+```bash
+pytest
+```

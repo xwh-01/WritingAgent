@@ -1,0 +1,144 @@
+"""Autonomous iterative review and repair loop."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from novelforge.agents.critic import CriticAgent
+from novelforge.agents.editor import EditorAgent
+from novelforge.agents.writer import WriterAgent
+from novelforge.context.assembler import ContextAssembler
+from novelforge.core.models import (
+    AutoRevisionReport,
+    AutoRevisionRoundReport,
+    Chapter,
+    QualityReviewReport,
+    RevisionIssue,
+    Story,
+)
+
+
+@dataclass
+class AutoRevisorConfig:
+    max_rounds: int = 5
+    pass_threshold: float = 8.5
+    quality_weights: dict[str, float] | None = None
+
+
+class AutoRevisor:
+    def __init__(
+        self,
+        story: Story,
+        writer: WriterAgent,
+        critic: CriticAgent,
+        editor: EditorAgent,
+        assembler: ContextAssembler,
+        config: AutoRevisorConfig,
+    ) -> None:
+        self.story = story
+        self.writer = writer
+        self.critic = critic
+        self.editor = editor
+        self.assembler = assembler
+        self.config = config
+        self.stop_requested = False
+        self.current_round = 0
+        self.status = "idle"
+
+    def request_stop(self) -> None:
+        self.stop_requested = True
+
+    def run(self, chapter_index: int) -> AutoRevisionReport:
+        self.status = "writing"
+        self.stop_requested = False
+        current_content = self._initial_draft(chapter_index)
+        result = AutoRevisionReport(chapter_index=chapter_index, final_content=current_content)
+
+        for round_num in range(1, self.config.max_rounds + 1):
+            if self.stop_requested:
+                result.stopped = True
+                break
+            self.current_round = round_num
+            self.status = f"reviewing_round_{round_num}"
+            review = self.critic.review_quality_scorecard(
+                current_content,
+                self.story.get_outline(chapter_index),
+                self.story,
+                self.assembler.assemble_writing_context(chapter_index, self.story),
+            )
+            total_score = review.total_score(self.config.quality_weights)
+            if total_score >= self.config.pass_threshold:
+                result.rounds.append(
+                    AutoRevisionRoundReport(
+                        round=round_num,
+                        review_report=review,
+                        revised_content=current_content,
+                        total_score=total_score,
+                        modification_summary="达到通过阈值，无需继续修订。",
+                    )
+                )
+                result.passed = True
+                result.final_score = total_score
+                result.final_content = current_content
+                break
+
+            self.status = f"revising_round_{round_num}"
+            revised = self.editor.revise_from_quality_report(current_content, review, self.story.style_guide)
+            result.rounds.append(
+                AutoRevisionRoundReport(
+                    round=round_num,
+                    review_report=review,
+                    revised_content=revised,
+                    total_score=total_score,
+                    modification_summary=self._summarize_revision(current_content, revised, review),
+                )
+            )
+            current_content = revised
+
+        if not result.passed and not result.stopped:
+            final_review = self.critic.review_quality_scorecard(
+                current_content,
+                self.story.get_outline(chapter_index),
+                self.story,
+                self.assembler.assemble_writing_context(chapter_index, self.story),
+            )
+            result.final_score = final_review.total_score(self.config.quality_weights)
+            result.final_content = current_content
+            result.residual_issues = final_review.issues
+            if not result.residual_issues:
+                result.residual_issues = [
+                    RevisionIssue(
+                        dimension="综合质量",
+                        severity="medium",
+                        description=f"最终评分 {result.final_score:.2f} 未达到通过阈值 {self.config.pass_threshold:.2f}。",
+                    )
+                ]
+        elif result.stopped:
+            result.final_content = current_content
+            result.residual_issues = [RevisionIssue(dimension="流程", severity="medium", description="用户请求中止自动修订循环。")]
+
+        self.status = "passed" if result.passed else "stopped" if result.stopped else "finished_with_residual_issues"
+        return result
+
+    def _initial_draft(self, chapter_index: int) -> str:
+        chapter = self.story.chapters.get(chapter_index)
+        if chapter and chapter.content:
+            return chapter.content
+        outline = self.story.get_outline(chapter_index)
+        if chapter is None or not chapter.beats:
+            chapter = Chapter(index=chapter_index, title=outline.title)
+            self.story.chapters[chapter_index] = chapter
+        context = self.assembler.assemble_writing_context(chapter_index, self.story)
+        content = self.writer.write_chapter(chapter_index, outline, chapter.beats, context, self.story.style_guide)
+        chapter.content = content
+        chapter.summary = outline.summary
+        chapter.status = "draft"
+        return content
+
+    def _summarize_revision(self, before: str, after: str, review: QualityReviewReport) -> str:
+        issue_count = len(review.issues)
+        length_delta = len(after) - len(before)
+        if issue_count:
+            dimensions = sorted({issue.dimension for issue in review.issues})
+            return f"针对 {issue_count} 个问题修订，涉及：{', '.join(dimensions)}；字数变化 {length_delta:+d}。"
+        return f"按评分卡进行整体润色；字数变化 {length_delta:+d}。"

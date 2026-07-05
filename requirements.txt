@@ -1,0 +1,12 @@
+openai
+chromadb
+pydantic
+pydantic-settings
+pyyaml
+fastapi
+uvicorn
+jinja2
+cmd2
+networkx
+python-dotenv
+pytest

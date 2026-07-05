@@ -1,0 +1,36 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Runtime storage artifacts
+novelforge/storage/chroma_data/*
+!novelforge/storage/chroma_data/.gitkeep
+novelforge/storage/graph_data/*
+!novelforge/storage/graph_data/.gitkeep
+novelforge/storage/story_state/*
+!novelforge/storage/story_state/.gitkeep
+
+# Logs and local databases
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
