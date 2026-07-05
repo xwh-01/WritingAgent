@@ -204,6 +204,36 @@ class VolumeSummary(BaseModel):
     summary: str = ""
 
 
+class ArcSummary(BaseModel):
+    arc: int
+    chapter_range: tuple[int, int]
+    summary: str = ""
+    key_threads: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+
+
+class StoryBible(BaseModel):
+    core_premise: str = ""
+    style_guide: str = ""
+    current_direction: str = ""
+    active_threads: list[str] = Field(default_factory=list)
+    character_roster: dict[str, str] = Field(default_factory=dict)
+    world_rules: list[str] = Field(default_factory=list)
+    continuity_constraints: list[str] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class MemoryCard(BaseModel):
+    id: str
+    type: str
+    content: str
+    chapter: int
+    importance: int = 5
+    entities: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    last_seen_chapter: int | None = None
+
+
 class Story(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     title: str
@@ -219,6 +249,9 @@ class Story(BaseModel):
     character_states: dict[str, list[CharacterState]] = Field(default_factory=dict)
     chapter_summaries: dict[int, ChapterSummary] = Field(default_factory=dict)
     volume_summaries: list[VolumeSummary] = Field(default_factory=list)
+    arc_summaries: list[ArcSummary] = Field(default_factory=list)
+    story_bible: StoryBible = Field(default_factory=StoryBible)
+    memory_cards: list[MemoryCard] = Field(default_factory=list)
     auto_revision_reports: dict[int, AutoRevisionReport] = Field(default_factory=dict)
     batch_reports: list[BatchWriteReport] = Field(default_factory=list)
     current_chapter: int = 0

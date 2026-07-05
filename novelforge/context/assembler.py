@@ -44,7 +44,7 @@ class ContextAssembler:
             graph = self.graph_store.get_ego_network(outline.pov_character, depth=1)
             sections.append((70, "视角角色关系网: " + json.dumps(graph, ensure_ascii=False)))
 
-        for collection in ("characters", "world", "plot_summaries"):
+        for collection in ("characters", "world", "plot_summaries", "memory_cards"):
             for item in self.vector_store.query(collection, query, k=5):
                 sections.append((50, f"相关记忆[{collection}]: {item['document']}"))
 

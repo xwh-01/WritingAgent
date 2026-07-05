@@ -1,0 +1,343 @@
+"""Second-generation long-novel memory orchestration.
+
+This layer turns extracted continuity signals into durable, retrievable memory.
+It is intentionally deterministic so it can run in tests and in API-key-free demos.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+
+from novelforge.core.models import (
+    ArcSummary,
+    CausalEvent,
+    CharacterState,
+    ChapterSummary,
+    Foreshadowing,
+    MemoryCard,
+    Story,
+)
+
+
+@dataclass
+class ChapterContextPack:
+    chapter_index: int
+    story_bible: str = ""
+    current_arc: str = ""
+    current_volume: str = ""
+    recent_summaries: list[str] = field(default_factory=list)
+    character_states: list[str] = field(default_factory=list)
+    pending_foreshadowings: list[str] = field(default_factory=list)
+    causal_threads: list[str] = field(default_factory=list)
+    retrieved_cards: list[str] = field(default_factory=list)
+    continuity_constraints: list[str] = field(default_factory=list)
+
+
+class MemoryEngineV2:
+    """Maintain hierarchical memory for very long fiction projects."""
+
+    def __init__(self, chapters_per_arc: int = 20, max_cards: int = 5000) -> None:
+        self.chapters_per_arc = chapters_per_arc
+        self.max_cards = max_cards
+
+    def process_chapter(
+        self,
+        story: Story,
+        chapter_index: int,
+        summary: ChapterSummary,
+        events: list[CausalEvent],
+        foreshadowings: list[Foreshadowing],
+        character_states: list[CharacterState],
+    ) -> dict[str, Any]:
+        cards = self._upsert_chapter_cards(story, chapter_index, summary, events, foreshadowings, character_states)
+        arc = self.update_arc_summary(story, chapter_index)
+        self.update_story_bible(story, chapter_index)
+        self._trim_cards(story)
+        return {"memory_cards": cards, "arc_summary": arc, "story_bible": story.story_bible}
+
+    def build_context_pack(self, story: Story, chapter_index: int, query: str = "") -> ChapterContextPack:
+        pack = ChapterContextPack(chapter_index=chapter_index)
+        bible = story.story_bible
+        if bible.core_premise or story.premise:
+            pack.story_bible = "\n".join(
+                line
+                for line in [
+                    f"Premise: {bible.core_premise or story.premise}",
+                    f"Direction: {bible.current_direction}",
+                    f"Style: {bible.style_guide or story.style_guide}",
+                    "Active threads: " + "; ".join(bible.active_threads[:12]) if bible.active_threads else "",
+                    "World rules: " + "; ".join(bible.world_rules[:8]) if bible.world_rules else "",
+                ]
+                if line
+            )
+
+        arc_index = self._arc_index(chapter_index)
+        arc = next((item for item in story.arc_summaries if item.arc == arc_index), None)
+        if arc:
+            pack.current_arc = f"Arc {arc.arc} ch{arc.chapter_range[0]}-{arc.chapter_range[1]}: {arc.summary}"
+
+        volume = max(1, (chapter_index - 1) // 10 + 1)
+        volume_summary = next((item for item in story.volume_summaries if item.volume == volume), None)
+        if volume_summary:
+            pack.current_volume = f"Volume {volume_summary.volume} ch{volume_summary.chapter_range[0]}-{volume_summary.chapter_range[1]}: {volume_summary.summary}"
+
+        recent = [
+            story.chapter_summaries[index]
+            for index in range(max(1, chapter_index - 5), chapter_index)
+            if index in story.chapter_summaries
+        ]
+        pack.recent_summaries = [f"ch{item.chapter_index}: {item.chapter_summary}" for item in recent]
+
+        involved = self._query_entities(story, chapter_index, query)
+        pack.character_states = self._format_character_states(story, involved)
+        pack.pending_foreshadowings = self._format_pending_foreshadowings(story, chapter_index, involved)
+        pack.causal_threads = [
+            f"{event.id}@ch{event.chapter}: {event.description}"
+            for event in sorted(story.causal_events, key=lambda item: item.chapter)[-12:]
+        ]
+        pack.retrieved_cards = [self._format_card(card) for card in self.retrieve_cards(story, chapter_index, query, involved)]
+        pack.continuity_constraints = list(bible.continuity_constraints[:12])
+        return pack
+
+    def format_context_pack(self, pack: ChapterContextPack, max_chars: int = 9000) -> str:
+        sections: list[str] = ["Memory Engine v2 Context Pack"]
+        if pack.story_bible:
+            sections.append("[Story Bible]\n" + pack.story_bible)
+        if pack.current_arc:
+            sections.append("[Current Arc]\n" + pack.current_arc)
+        if pack.current_volume:
+            sections.append("[Current Volume]\n" + pack.current_volume)
+        if pack.recent_summaries:
+            sections.append("[Recent Chapters]\n" + "\n".join("- " + item for item in pack.recent_summaries))
+        if pack.character_states:
+            sections.append("[Character States]\n" + "\n".join("- " + item for item in pack.character_states))
+        if pack.pending_foreshadowings:
+            sections.append("[Open Foreshadowing]\n" + "\n".join("- " + item for item in pack.pending_foreshadowings))
+        if pack.causal_threads:
+            sections.append("[Causal Threads]\n" + "\n".join("- " + item for item in pack.causal_threads))
+        if pack.retrieved_cards:
+            sections.append("[Retrieved Memory Cards]\n" + "\n".join("- " + item for item in pack.retrieved_cards))
+        if pack.continuity_constraints:
+            sections.append("[Continuity Constraints]\n" + "\n".join("- " + item for item in pack.continuity_constraints))
+        return "\n\n".join(sections)[:max_chars]
+
+    def retrieve_cards(
+        self,
+        story: Story,
+        chapter_index: int,
+        query: str = "",
+        entities: set[str] | None = None,
+        limit: int = 12,
+    ) -> list[MemoryCard]:
+        entities = entities or set()
+        query_terms = self._terms(query)
+        scored: list[tuple[float, MemoryCard]] = []
+        for card in story.memory_cards:
+            score = float(card.importance)
+            if card.chapter < chapter_index:
+                score += max(0.0, 4.0 - ((chapter_index - card.chapter) / 50.0))
+            if entities and entities.intersection(card.entities):
+                score += 6.0
+            if query_terms:
+                overlap = query_terms.intersection(self._terms(card.content + " " + " ".join(card.tags)))
+                score += min(6.0, len(overlap) * 1.5)
+            if card.type in {"foreshadowing", "character_state"}:
+                score += 2.0
+            scored.append((score, card))
+        scored.sort(key=lambda item: (item[0], item[1].chapter), reverse=True)
+        return [card for _, card in scored[:limit]]
+
+    def update_arc_summary(self, story: Story, chapter_index: int) -> ArcSummary:
+        arc_index = self._arc_index(chapter_index)
+        start = (arc_index - 1) * self.chapters_per_arc + 1
+        end = arc_index * self.chapters_per_arc
+        summaries = [story.chapter_summaries[index] for index in range(start, end + 1) if index in story.chapter_summaries]
+        text = " ".join(item.chapter_summary for item in summaries)
+        events = [
+            event.description
+            for event in story.causal_events
+            if start <= event.chapter <= end
+        ][-8:]
+        pending = [
+            item.description
+            for item in story.foreshadowings
+            if item.status == "pending" and start <= item.created_chapter <= end
+        ][-8:]
+        summary = self._compress(" ".join([text] + events), 900)
+        arc = ArcSummary(
+            arc=arc_index,
+            chapter_range=(start, max(start, min(end, chapter_index))),
+            summary=summary,
+            key_threads=events,
+            open_questions=pending,
+        )
+        story.arc_summaries = [item for item in story.arc_summaries if item.arc != arc_index]
+        story.arc_summaries.append(arc)
+        story.arc_summaries.sort(key=lambda item: item.arc)
+        return arc
+
+    def update_story_bible(self, story: Story, chapter_index: int) -> None:
+        bible = story.story_bible
+        bible.core_premise = story.premise
+        bible.style_guide = story.style_guide
+        latest_arc = max(story.arc_summaries, key=lambda item: item.arc, default=None)
+        latest_summary = story.chapter_summaries.get(chapter_index)
+        bible.current_direction = self._compress(
+            latest_summary.chapter_summary if latest_summary else (latest_arc.summary if latest_arc else story.premise),
+            600,
+        )
+        bible.active_threads = self._dedupe(
+            [item.description for item in story.foreshadowings if item.status == "pending"][-20:]
+            + [event.description for event in sorted(story.causal_events, key=lambda item: item.chapter)[-12:]]
+        )[:24]
+        bible.character_roster = {}
+        for character_id, character in story.characters.items():
+            current = max(story.character_states.get(character_id, []), key=lambda item: item.chapter, default=None)
+            state = ""
+            if current:
+                state = f"ch{current.chapter}: {current.emotional_state}; {current.location}"
+            bible.character_roster[character_id] = self._compress(f"{character.name} {state}".strip(), 240)
+        bible.continuity_constraints = self._dedupe(
+            [f"Keep foreshadowing open until resolved: {item.id} {item.description}" for item in story.foreshadowings if item.status == "pending"][-20:]
+            + [f"Respect latest state of {cid}: {states[-1].emotional_state}, {states[-1].location}" for cid, states in story.character_states.items() if states]
+        )[:30]
+        bible.updated_at = datetime.now(timezone.utc)
+
+    def _upsert_chapter_cards(
+        self,
+        story: Story,
+        chapter_index: int,
+        summary: ChapterSummary,
+        events: list[CausalEvent],
+        foreshadowings: list[Foreshadowing],
+        character_states: list[CharacterState],
+    ) -> list[MemoryCard]:
+        cards: list[MemoryCard] = [
+            MemoryCard(
+                id=f"{story.id}:ch:{chapter_index}:summary",
+                type="chapter_summary",
+                content=summary.chapter_summary,
+                chapter=chapter_index,
+                importance=7,
+                tags=["summary"],
+            )
+        ]
+        for event in events:
+            cards.append(
+                MemoryCard(
+                    id=f"{story.id}:event:{event.id}",
+                    type="causal_event",
+                    content=event.description,
+                    chapter=event.chapter,
+                    importance=8,
+                    tags=["causal_event"],
+                )
+            )
+        for item in foreshadowings:
+            cards.append(
+                MemoryCard(
+                    id=f"{story.id}:foreshadowing:{item.id}",
+                    type="foreshadowing",
+                    content=item.description,
+                    chapter=item.created_chapter,
+                    importance=9,
+                    tags=["foreshadowing", item.status],
+                    last_seen_chapter=chapter_index,
+                )
+            )
+        for state in character_states:
+            cards.append(
+                MemoryCard(
+                    id=f"{story.id}:character_state:{state.character_id}:ch:{chapter_index}",
+                    type="character_state",
+                    content=self._format_state(state),
+                    chapter=chapter_index,
+                    importance=8,
+                    entities=[state.character_id],
+                    tags=["character_state"],
+                )
+            )
+        existing = {card.id: card for card in story.memory_cards if card.chapter != chapter_index}
+        for card in cards:
+            existing[card.id] = card
+        story.memory_cards = sorted(existing.values(), key=lambda item: (item.chapter, item.importance))
+        return cards
+
+    def _trim_cards(self, story: Story) -> None:
+        if len(story.memory_cards) <= self.max_cards:
+            return
+        story.memory_cards = sorted(story.memory_cards, key=lambda item: (item.importance, item.chapter), reverse=True)[: self.max_cards]
+        story.memory_cards.sort(key=lambda item: (item.chapter, item.importance))
+
+    def _query_entities(self, story: Story, chapter_index: int, query: str) -> set[str]:
+        entities: set[str] = set()
+        try:
+            outline = story.get_outline(chapter_index)
+            if outline.pov_character:
+                entities.add(outline.pov_character)
+            query += " " + " ".join([outline.title, outline.summary, outline.conflict, outline.pov_character or ""])
+        except KeyError:
+            pass
+        for character_id, character in story.characters.items():
+            if character_id in query or (character.name and character.name in query):
+                entities.add(character_id)
+        return entities
+
+    def _format_character_states(self, story: Story, entities: set[str]) -> list[str]:
+        candidates = entities or set(story.characters.keys())
+        rows: list[str] = []
+        for character_id in sorted(candidates):
+            current = max(story.character_states.get(character_id, []), key=lambda item: item.chapter, default=None)
+            if current:
+                name = story.characters.get(character_id).name if character_id in story.characters else character_id
+                rows.append(f"{name}: {self._format_state(current)}")
+        return rows[:12]
+
+    def _format_pending_foreshadowings(self, story: Story, chapter_index: int, entities: set[str]) -> list[str]:
+        pending = [item for item in story.foreshadowings if item.status == "pending"]
+        pending.sort(key=lambda item: ((item.target_chapter or chapter_index + 999) - chapter_index, -item.created_chapter))
+        return [
+            f"{item.id} created@ch{item.created_chapter}"
+            + (f" target@ch{item.target_chapter}" if item.target_chapter else "")
+            + f": {item.description}"
+            for item in pending[:12]
+        ]
+
+    def _format_card(self, card: MemoryCard) -> str:
+        entities = f" entities={','.join(card.entities)}" if card.entities else ""
+        return f"{card.type}@ch{card.chapter}{entities}: {card.content}"
+
+    def _format_state(self, state: CharacterState) -> str:
+        parts = [
+            f"ch{state.chapter}",
+            state.emotional_state,
+            state.location,
+            "; ".join(state.knowledge_gained[:3]),
+        ]
+        if state.relationship_changes:
+            parts.append("relations=" + ", ".join(f"{k}:{v}" for k, v in list(state.relationship_changes.items())[:4]))
+        return self._compress(" | ".join(part for part in parts if part), 320)
+
+    def _terms(self, text: str) -> set[str]:
+        return {term.lower() for term in re.findall(r"[\w\u4e00-\u9fff]{2,}", text)}
+
+    def _compress(self, text: str, limit: int) -> str:
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:limit]
+
+    def _dedupe(self, values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for value in values:
+            key = value.strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            result.append(key)
+        return result
+
+    def _arc_index(self, chapter_index: int) -> int:
+        return max(1, (chapter_index - 1) // self.chapters_per_arc + 1)

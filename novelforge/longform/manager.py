@@ -10,6 +10,7 @@ from novelforge.llm.base import LLMClient
 from novelforge.longform.causality import CausalityTracker
 from novelforge.longform.character_state import CharacterStateTracker
 from novelforge.longform.foreshadowing import ForeshadowingTracker
+from novelforge.longform.memory_engine import MemoryEngineV2
 from novelforge.longform.pacing import PacingAnalyzer
 from novelforge.longform.summaries import SummaryManager
 
@@ -19,6 +20,7 @@ class LongformManager:
         self.foreshadowing_tracker = ForeshadowingTracker(llm)
         self.causality_tracker = CausalityTracker(llm)
         self.summary_manager = SummaryManager(llm)
+        self.memory_engine = MemoryEngineV2()
         self.pacing_analyzer = PacingAnalyzer()
         self.character_state_tracker = CharacterStateTracker(llm)
         self.pacing_history: dict[str, list[dict[str, Any]]] = {}
@@ -43,6 +45,14 @@ class LongformManager:
 
         volume = max(1, (chapter_index - 1) // self.summary_manager.chapters_per_volume + 1)
         self.summary_manager.generate_volume_summary(story, volume)
+        memory = self.memory_engine.process_chapter(
+            story,
+            chapter_index,
+            summary,
+            events,
+            foreshadowings,
+            states,
+        )
         return {
             "summary": summary,
             "events": events,
@@ -50,10 +60,16 @@ class LongformManager:
             "character_states": states,
             "pacing": pacing,
             "pacing_warning": warning,
+            "memory": memory,
         }
 
     def get_enhanced_context(self, chapter_index: int, story: Story) -> str:
         sections: list[str] = []
+        pack = self.memory_engine.build_context_pack(story, chapter_index)
+        packed_context = self.memory_engine.format_context_pack(pack)
+        if packed_context.strip() != "Memory Engine v2 Context Pack":
+            sections.append(packed_context)
+
         rolling = self.summary_manager.get_rolling_context(story, chapter_index)
         if rolling.strip() != "长篇滚动记忆:":
             sections.append(rolling)

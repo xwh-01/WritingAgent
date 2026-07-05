@@ -124,8 +124,7 @@ class NovelForgeEngine:
         story.chapters[chapter_index] = chapter
         story.current_chapter = chapter_index
         story.status = WorkflowState.CHAPTER_DRAFT.value
-        self._index_chapter(story, chapter)
-        self.longform_manager.process_new_chapter(story, chapter_index, chapter.content)
+        self._process_chapter_memory(story, chapter)
         story.touch()
         self.save_state()
         self.bus.emit("chapter_written", {"story_id": str(story.id), "chapter": chapter_index})
@@ -138,6 +137,7 @@ class NovelForgeEngine:
         if chapter is None or not chapter.content:
             raise WorkflowError(f"Chapter {chapter_index} has no draft to review.")
         memories = self.vector_store.query("plot_summaries", outline.summary, k=5)
+        memories.extend(self.vector_store.query("memory_cards", outline.summary, k=5))
         longform_context = self.longform_manager.get_enhanced_context(chapter_index, story)
         report = self.critic.review_chapter(
             chapter.content,
@@ -168,8 +168,7 @@ class NovelForgeEngine:
         chapter.update_content(content, status="revised", summary=chapter.summary)
         story.status = WorkflowState.REVISING.value
         story.touch()
-        self._index_chapter(story, chapter)
-        self.longform_manager.process_new_chapter(story, chapter_index, chapter.content)
+        self._process_chapter_memory(story, chapter)
         self.save_state()
         self.bus.emit("chapter_revised", {"story_id": str(story.id), "chapter": chapter_index})
         return chapter
@@ -197,8 +196,7 @@ class NovelForgeEngine:
         story.chapters[chapter_index] = chapter
         story.current_chapter = chapter_index
         story.status = WorkflowState.CHAPTER_DRAFT.value if status == "draft" else story.status
-        self._index_chapter(story, chapter)
-        self.longform_manager.process_new_chapter(story, chapter_index, chapter.content)
+        self._process_chapter_memory(story, chapter)
         story.touch()
         self.save_state()
         self.bus.emit("chapter_updated", {"story_id": str(story.id), "chapter": chapter_index})
@@ -238,8 +236,7 @@ class NovelForgeEngine:
         story.current_chapter = chapter_index
         story.auto_revision_reports[chapter_index] = result
         story.status = WorkflowState.CHAPTER_FINALIZED.value if result.passed else WorkflowState.REVISING.value
-        self._index_chapter(story, chapter)
-        self.longform_manager.process_new_chapter(story, chapter_index, chapter.content)
+        self._process_chapter_memory(story, chapter)
         story.touch()
         self.save_state()
         self.auto_status = self.current_auto_revisor.status
@@ -405,7 +402,7 @@ class NovelForgeEngine:
         if chapter_index >= len(story.outlines):
             story.status = WorkflowState.COMPLETED.value
         if chapter.content:
-            self.longform_manager.process_new_chapter(story, chapter_index, chapter.content)
+            self._process_chapter_memory(story, chapter)
         story.touch()
         self.save_state()
         self.bus.emit("chapter_finalized", {"story_id": str(story.id), "chapter": chapter_index})
@@ -470,6 +467,29 @@ class NovelForgeEngine:
             [chapter.summary or chapter.content[:500]],
             [{"type": "chapter_summary", "chapter": chapter.index, "version": chapter.version}],
             [doc_id],
+        )
+
+    def _process_chapter_memory(self, story: Story, chapter: Chapter) -> None:
+        self._index_chapter(story, chapter)
+        result = self.longform_manager.process_new_chapter(story, chapter.index, chapter.content)
+        memory = result.get("memory", {}) if isinstance(result, dict) else {}
+        cards = memory.get("memory_cards", []) if isinstance(memory, dict) else []
+        if not cards:
+            return
+        self.vector_store.add(
+            "memory_cards",
+            [card.content for card in cards],
+            [
+                {
+                    "type": card.type,
+                    "chapter": card.chapter,
+                    "importance": card.importance,
+                    "entities": ",".join(card.entities),
+                    "tags": ",".join(card.tags),
+                }
+                for card in cards
+            ],
+            [card.id for card in cards],
         )
 
     def _require_story(self) -> Story:
