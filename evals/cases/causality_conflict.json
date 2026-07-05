@@ -1,0 +1,31 @@
+{
+  "id": "causality_conflict",
+  "name": "Causality conflict: future cause",
+  "category": "causality",
+  "description": "An event references a cause that happens in a later chapter.",
+  "story": {
+    "title": "Future Cause",
+    "premise": "A tournament chain must remain causal.",
+    "genre": "sports"
+  },
+  "causal_events": [
+    {
+      "id": "ev-final-secret",
+      "chapter": 8,
+      "description": "王绍康在决赛后才知道教练隐藏了真正战术。",
+      "causes": [],
+      "effects": []
+    }
+  ],
+  "new_event": {
+    "id": "ev-early-victory",
+    "chapter": 4,
+    "description": "王绍康因为提前知道隐藏战术而赢下半决赛。",
+    "causes": ["ev-final-secret"],
+    "effects": []
+  },
+  "expected": {
+    "issue_type": "causality_issues",
+    "keywords": ["未来章节", "前因"]
+  }
+}

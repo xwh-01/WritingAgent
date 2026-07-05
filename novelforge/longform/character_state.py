@@ -53,6 +53,10 @@ class CharacterStateTracker(ICharacterStateTracker):
         for before, after in opposite_pairs:
             if before in state_before.emotional_state and after in state_after.emotional_state and not state_after.relationship_changes:
                 issues.append(f"{state_after.character_id} 情绪从 {before} 到 {after}，需要过渡或原因。")
+        for knowledge in state_before.knowledge_gained:
+            if "怕水" in knowledge and state_after.location and "湖" in state_after.location:
+                if "克服" not in " ".join(state_after.knowledge_gained) and "恐惧" not in state_after.emotional_state:
+                    issues.append(f"{state_after.character_id} 曾被记录为怕水，但本章进入湖相关场景，缺少克服恐惧的过渡。")
         return issues
 
     def _llm_extract(self, chapter_index: int, content: str, characters: list[Character]) -> list[CharacterState]:

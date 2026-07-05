@@ -1,0 +1,38 @@
+{
+  "id": "foreshadowing_overdue",
+  "name": "Foreshadowing overdue",
+  "category": "foreshadowing",
+  "description": "A planned foreshadowing payoff chapter has passed but the clue remains pending.",
+  "story": {
+    "title": "The Unclaimed Token",
+    "premise": "A mysterious token should matter in the tournament final.",
+    "genre": "sports"
+  },
+  "outlines": [
+    {
+      "chapter_index": 6,
+      "title": "赛后空白",
+      "summary": "决赛结束，但信物没有被提起。",
+      "conflict": "胜利之后仍有未解决的承诺。",
+      "pov_character": "hero"
+    }
+  ],
+  "foreshadowings": [
+    {
+      "id": "fs-token",
+      "description": "后羿图案的旧护腕将在第5章决赛揭示真正用途。",
+      "created_chapter": 1,
+      "target_chapter": 5,
+      "status": "pending",
+      "notes": ""
+    }
+  ],
+  "chapter_under_review": {
+    "chapter_index": 6,
+    "content": "比赛结束后，队友们拥抱庆祝。王绍康看着记分牌，什么也没有想。"
+  },
+  "expected": {
+    "issue_type": "foreshadowing_issues",
+    "keywords": ["伏笔", "第5章", "pending"]
+  }
+}

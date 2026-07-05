@@ -1,0 +1,33 @@
+{
+  "id": "pacing_flat",
+  "name": "Pacing flat trend",
+  "category": "pacing",
+  "description": "Three consecutive quiet chapters should trigger a pacing warning.",
+  "story": {
+    "title": "Quiet Stretch",
+    "premise": "A sports story loses conflict momentum.",
+    "genre": "sports"
+  },
+  "pacing_history": [
+    {
+      "chapter": 1,
+      "content": "他看着天空。风很安静。大家坐着聊天，没有比赛，也没有新的选择。"
+    },
+    {
+      "chapter": 2,
+      "content": "训练馆很安静。王绍康整理鞋带。时间慢慢过去，没有任何阻力出现。"
+    },
+    {
+      "chapter": 3,
+      "content": "午后的阳光落在长椅上。队员们只是等待，故事没有明显推进。"
+    }
+  ],
+  "chapter_under_review": {
+    "chapter_index": 3,
+    "content": "午后的阳光落在长椅上。队员们只是等待，故事没有明显推进。"
+  },
+  "expected": {
+    "issue_type": "pacing_issues",
+    "keywords": ["冲突强度偏低", "预警"]
+  }
+}

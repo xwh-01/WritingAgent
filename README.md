@@ -180,6 +180,27 @@ POST /chapters/auto/stop?story_id=<story_id>&job_id=<job_id>
 GET /chapters/1/report.md?story_id=<story_id>
 ```
 
+## 长篇一致性评测集
+
+项目内置可复现 evals，用来证明 Agent 能发现长篇小说中的典型问题：
+
+```bash
+python -m evals.run_eval
+```
+
+当前覆盖：
+
+- 人设矛盾：角色怕水却无过渡跳湖
+- 伏笔逾期：计划回收章节已过但仍 pending
+- 因果冲突：当前事件引用未来章节作为前因
+- 节奏平淡：连续多章冲突强度过低
+
+运行后会生成：
+
+```text
+evals/report.md
+```
+
 ## 架构
 
 ```text
@@ -229,6 +250,7 @@ DEEPSEEK_API_KEY=your_key
 - `dashboard/`: 故事全景仪表盘的数据提供层、FastAPI 路由和前端页面
 - `workspace/`: Web 创作工作台页面、样式和前端交互
 - `storage/`: 故事仓库和自动修订报告导出
+- `evals/`: 长篇一致性评测用例、运行器和报告
 - `api/`: FastAPI 路由
 - `cli.py`: 交互式命令行
 

@@ -1,0 +1,55 @@
+{
+  "id": "character_contradiction",
+  "name": "Character contradiction: fear of water",
+  "category": "character_state",
+  "description": "A character previously afraid of water happily jumps into a lake without transition.",
+  "story": {
+    "title": "Lake Trial",
+    "premise": "A goalkeeper grows through psychological trials.",
+    "genre": "sports"
+  },
+  "characters": [
+    {
+      "id": "hero",
+      "name": "王绍康",
+      "personality": "谨慎但渴望证明自己"
+    }
+  ],
+  "outlines": [
+    {
+      "chapter_index": 5,
+      "title": "湖边训练",
+      "summary": "王绍康进入湖边训练场。",
+      "conflict": "他必须面对水边训练的心理压力。",
+      "pov_character": "hero"
+    }
+  ],
+  "character_states": {
+    "hero": [
+      {
+        "character_id": "hero",
+        "chapter": 3,
+        "emotional_state": "恐惧",
+        "location": "训练场",
+        "knowledge_gained": ["王绍康怕水，靠近深水会失控。"],
+        "relationship_changes": {}
+      },
+      {
+        "character_id": "hero",
+        "chapter": 5,
+        "emotional_state": "兴奋",
+        "location": "湖",
+        "knowledge_gained": [],
+        "relationship_changes": {}
+      }
+    ]
+  },
+  "chapter_under_review": {
+    "chapter_index": 5,
+    "content": "王绍康笑着跳进湖里，像终于找到最喜欢的训练方式，没有任何犹豫。"
+  },
+  "expected": {
+    "issue_type": "character_state_issues",
+    "keywords": ["怕水", "湖", "过渡"]
+  }
+}
