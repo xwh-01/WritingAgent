@@ -30,6 +30,19 @@ class InMemoryVectorStore(IVectorStore):
             scored.append({"id": doc_id, "document": document, "metadata": metadata, "score": score})
         return sorted(scored, key=lambda item: item["score"], reverse=True)[:k]
 
+    def delete_story(self, story_id: str) -> int:
+        deleted = 0
+        for docs in self._collections.values():
+            ids = [
+                doc_id
+                for doc_id, (_, metadata) in docs.items()
+                if str(metadata.get("story_id", "")) == story_id or doc_id.startswith(f"{story_id}:")
+            ]
+            for doc_id in ids:
+                docs.pop(doc_id, None)
+                deleted += 1
+        return deleted
+
     def _tokenize(self, text: str) -> Counter[str]:
         return Counter(re.findall(r"[\w\u4e00-\u9fff]+", text.lower()))
 
@@ -86,3 +99,27 @@ class ChromaVectorStore(IVectorStore):
             }
             for doc_id, doc, meta, distance in zip(ids, docs, metas, distances, strict=False)
         ]
+
+    def delete_story(self, story_id: str) -> int:
+        if self._fallback is not None:
+            return self._fallback.delete_story(story_id)
+        deleted = 0
+        collections = self.client.list_collections()
+        for collection in collections:
+            coll = self.client.get_or_create_collection(collection.name)
+            ids: list[str] = []
+            try:
+                by_meta = coll.get(where={"story_id": story_id})
+                ids.extend(by_meta.get("ids", []) or [])
+            except Exception:
+                pass
+            try:
+                all_items = coll.get()
+                ids.extend([doc_id for doc_id in all_items.get("ids", []) if doc_id.startswith(f"{story_id}:")])
+            except Exception:
+                pass
+            unique_ids = sorted(set(ids))
+            if unique_ids:
+                coll.delete(ids=unique_ids)
+                deleted += len(unique_ids)
+        return deleted

@@ -250,6 +250,23 @@ textarea:focus {
     white-space: nowrap;
 }
 
+.story-item .story-delete {
+    margin-left: auto;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 20px;
+    text-align: center;
+    flex: 0 0 22px;
+}
+
+.story-item .story-delete:hover {
+    background: rgba(180, 35, 24, 0.1);
+    color: var(--red);
+}
+
 .story-item.active,
 .chapter-item.active {
     border-color: var(--teal);

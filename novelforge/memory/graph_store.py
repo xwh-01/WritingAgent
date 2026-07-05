@@ -78,6 +78,32 @@ class NetworkXGraphStore(IGraphStore):
             if node_id != character_id
         ]
 
+    def delete_story(self, story_id: str) -> int:
+        if nx is None:
+            nodes = [
+                node_id
+                for node_id, attrs in self.graph["nodes"].items()
+                if attrs.get("story_id") == story_id or str(node_id).startswith(f"{story_id}:")
+            ]
+            self.graph["nodes"] = {node: attrs for node, attrs in self.graph["nodes"].items() if node not in nodes}
+            self.graph["edges"] = [
+                edge
+                for edge in self.graph["edges"]
+                if edge.get("source") not in nodes and edge.get("target") not in nodes
+            ]
+            if nodes:
+                self.save()
+            return len(nodes)
+        nodes = [
+            node
+            for node, attrs in self.graph.nodes(data=True)
+            if attrs.get("story_id") == story_id or str(node).startswith(f"{story_id}:")
+        ]
+        if nodes:
+            self.graph.remove_nodes_from(nodes)
+            self.save()
+        return len(nodes)
+
     def save(self) -> None:
         if nx is None:
             data = self.graph

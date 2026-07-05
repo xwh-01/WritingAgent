@@ -62,7 +62,7 @@ def test_engine_indexes_memory_cards_after_writing(test_config) -> None:
     assert story.world_settings
     assert retrieved
     assert engine.vector_store.query("characters", "主角 training", k=5)
-    assert engine.graph_store.get_ego_network("hero", depth=1)["nodes"]
+    assert engine.graph_store.get_ego_network(f"{story.id}:character:hero", depth=1)["nodes"]
     assert "Memory Engine v2 Context Pack" in context
     assert "score=" in context
 

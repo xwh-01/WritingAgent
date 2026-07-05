@@ -488,13 +488,26 @@ class NovelForgeEngine:
             raise WorkflowError(f"No auto-revision report for chapter {chapter_index}.")
         return self.repository.export_auto_revision_report(story, report, output_path)
 
+    def delete_story_data(self, story_id: str | UUID) -> dict[str, object]:
+        story_id_str = str(story_id)
+        result = {
+            "story_id": story_id_str,
+            "story_file": self.repository.delete(story_id_str),
+            "vector_items": self.vector_store.delete_story(story_id_str),
+            "fts_items": self.text_store.delete_story(story_id_str),
+            "graph_nodes": self.graph_store.delete_story(story_id_str),
+        }
+        if self.story and str(self.story.id) == story_id_str:
+            self.story = None
+        return result
+
     def _index_chapter(self, story: Story, chapter: Chapter) -> None:
         doc_id = f"{story.id}:chapter:{chapter.index}:v{chapter.version}"
         self.text_store.index_document(doc_id, chapter.content)
         self.vector_store.add(
             "plot_summaries",
             [chapter.summary or chapter.content[:500]],
-            [{"type": "chapter_summary", "chapter": chapter.index, "version": chapter.version}],
+            [{"story_id": str(story.id), "type": "chapter_summary", "chapter": chapter.index, "version": chapter.version}],
             [doc_id],
         )
 
@@ -503,7 +516,7 @@ class NovelForgeEngine:
         result = self.longform_manager.process_new_chapter(story, chapter.index, chapter.content)
         extraction = result.get("extraction") if isinstance(result, dict) else None
         if extraction is not None:
-            self._index_extracted_memory(extraction)
+            self._index_extracted_memory(story, extraction)
         memory = result.get("memory", {}) if isinstance(result, dict) else {}
         cards = memory.get("memory_cards", []) if isinstance(memory, dict) else []
         if not cards:
@@ -514,6 +527,7 @@ class NovelForgeEngine:
             [card.content for card in cards],
             [
                 {
+                    "story_id": str(story.id),
                     "type": card.type,
                     "chapter": card.chapter,
                     "importance": card.importance,
@@ -522,7 +536,7 @@ class NovelForgeEngine:
                 }
                 for card in cards
             ],
-            [card.id for card in cards],
+            [card.id if card.id.startswith(f"{story.id}:") else f"{story.id}:memory_card:{card.id}" for card in cards],
         )
         self._audit_processed_chapter(story, chapter)
 
@@ -537,7 +551,7 @@ class NovelForgeEngine:
         report = self.continuity_auditor.audit_chapter(story, chapter.index, chapter.content, longform_context)
         story.continuity_reports[chapter.index] = report
 
-    def _index_extracted_memory(self, extraction) -> None:
+    def _index_extracted_memory(self, story: Story, extraction) -> None:
         characters = getattr(extraction, "characters", [])
         if characters:
             self.vector_store.add(
@@ -558,23 +572,29 @@ class NovelForgeEngine:
                     )
                     for character in characters
                 ],
-                [{"type": "character", "character_id": character.id} for character in characters],
-                [f"character:{character.id}" for character in characters],
+                [{"story_id": str(story.id), "type": "character", "character_id": character.id} for character in characters],
+                [f"{story.id}:character:{character.id}" for character in characters],
             )
             for character in characters:
-                self.graph_store.add_node(character.id, character.model_dump())
+                attrs = character.model_dump()
+                attrs["story_id"] = str(story.id)
+                self.graph_store.add_node(f"{story.id}:character:{character.id}", attrs)
 
         world_settings = getattr(extraction, "world_settings", [])
         if world_settings:
             self.vector_store.add(
                 "world",
                 [setting.content for setting in world_settings],
-                [{"type": "world", "category": setting.category, **setting.metadata} for setting in world_settings],
-                [f"world:{setting.id}" for setting in world_settings],
+                [{"story_id": str(story.id), "type": "world", "category": setting.category, **setting.metadata} for setting in world_settings],
+                [f"{story.id}:world:{setting.id}" for setting in world_settings],
             )
 
         for relation in getattr(extraction, "relationships", []):
-            self.graph_store.add_edge(relation.source, relation.target, relation.relation)
+            self.graph_store.add_edge(
+                f"{story.id}:character:{relation.source}",
+                f"{story.id}:character:{relation.target}",
+                relation.relation,
+            )
 
     def _require_story(self) -> Story:
         if self.story is None:

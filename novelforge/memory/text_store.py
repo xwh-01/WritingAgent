@@ -49,6 +49,22 @@ class SQLiteFTSStore(IFTSStore):
         ).fetchall()
         return [row[0] for row in rows]
 
+    def delete_story(self, story_id: str) -> int:
+        prefix = f"{story_id}:%"
+        with self.connection:
+            doc_ids = [
+                row[0]
+                for row in self.connection.execute(
+                    "SELECT doc_id FROM documents WHERE doc_id LIKE ?",
+                    (prefix,),
+                ).fetchall()
+            ]
+            if self._fts_enabled:
+                for doc_id in doc_ids:
+                    self.connection.execute("DELETE FROM documents_fts WHERE doc_id = ?", (doc_id,))
+            self.connection.execute("DELETE FROM documents WHERE doc_id LIKE ?", (prefix,))
+        return len(doc_ids)
+
     def _init_schema(self) -> None:
         with self.connection:
             self.connection.execute(

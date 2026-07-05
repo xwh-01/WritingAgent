@@ -104,12 +104,35 @@ function renderStories() {
     els.storyList.innerHTML = state.stories.length ? state.stories.map(story => `
         <button class="story-item ${story.id === activeId ? "active" : ""}" data-story-id="${escapeHtml(story.id)}">
             <i data-lucide="book-open"></i><span>${escapeHtml(story.title)}</span>
+            <span class="story-delete" data-delete-story-id="${escapeHtml(story.id)}" title="Delete">×</span>
         </button>
     `).join("") : `<div class="project-meta">No stories</div>`;
     els.storyList.querySelectorAll("[data-story-id]").forEach(button => {
         button.addEventListener("click", () => loadStory(button.dataset.storyId));
     });
+    els.storyList.querySelectorAll("[data-delete-story-id]").forEach(button => {
+        button.addEventListener("click", deleteStory);
+    });
     renderIcons();
+}
+
+async function deleteStory(event) {
+    event.stopPropagation();
+    const storyId = event.currentTarget.dataset.deleteStoryId;
+    const story = state.stories.find(item => item.id === storyId);
+    if (!story) return;
+    const ok = confirm(`删除《${story.title}》？这会同时清理相关记忆索引。`);
+    if (!ok) return;
+    setStatus("Deleting story");
+    await deleteJson(`/stories/${storyId}`);
+    if (state.story?.id === storyId) {
+        state.story = null;
+        state.activeChapter = 1;
+    }
+    await loadStories();
+    if (!state.story && state.stories[0]) await loadStory(state.stories[0].id);
+    if (!state.stories.length) renderWorkspace();
+    setStatus("Ready");
 }
 
 function renderStoryHeader() {
@@ -392,6 +415,12 @@ async function putJson(url, body) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     });
+    if (!response.ok) throw new Error(`${response.status} ${url}`);
+    return response.json();
+}
+
+async function deleteJson(url) {
+    const response = await fetch(url, { method: "DELETE" });
     if (!response.ok) throw new Error(`${response.status} ${url}`);
     return response.json();
 }

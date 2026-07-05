@@ -37,6 +37,13 @@ class StoryRepository:
     def exists(self, story_id: str | UUID) -> bool:
         return self.story_path(story_id).exists()
 
+    def delete(self, story_id: str | UUID) -> bool:
+        path = self.story_path(story_id)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
     def story_path(self, story_id: str | UUID) -> Path:
         return self.state_dir / f"{story_id}.json"
 

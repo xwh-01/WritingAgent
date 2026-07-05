@@ -30,6 +30,14 @@ def get_story(story_id: str) -> StoryResponse:
     return StoryResponse(story=engine.story)
 
 
+@router.delete("/{story_id}")
+def delete_story(story_id: str) -> dict:
+    engine = ENGINES.get(story_id) or NovelForgeEngine()
+    result = engine.delete_story_data(story_id)
+    ENGINES.pop(story_id, None)
+    return {"deleted": bool(result["story_file"]), **result}
+
+
 @router.post("/{story_id}/outline", response_model=OutlineResponse)
 def generate_outline(story_id: str, payload: OutlineRequest) -> OutlineResponse:
     engine = get_engine(story_id)

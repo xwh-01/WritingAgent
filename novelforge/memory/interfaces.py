@@ -15,6 +15,10 @@ class IVectorStore(ABC):
     def query(self, collection: str, query_text: str, k: int = 5) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    @abstractmethod
+    def delete_story(self, story_id: str) -> int:
+        raise NotImplementedError
+
 
 class IGraphStore(ABC):
     @abstractmethod
@@ -29,6 +33,10 @@ class IGraphStore(ABC):
     def get_ego_network(self, node_id: str, depth: int = 1) -> dict[str, Any]:
         raise NotImplementedError
 
+    @abstractmethod
+    def delete_story(self, story_id: str) -> int:
+        raise NotImplementedError
+
 
 class IFTSStore(ABC):
     @abstractmethod
@@ -37,4 +45,8 @@ class IFTSStore(ABC):
 
     @abstractmethod
     def search(self, query: str, limit: int = 10) -> list[str]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_story(self, story_id: str) -> int:
         raise NotImplementedError
