@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 from uuid import UUID
 
-from novelforge.agents import CriticAgent, EditorAgent, PlannerAgent, WriterAgent
+from novelforge.agents import ContinuityAuditorAgent, CriticAgent, EditorAgent, PlannerAgent, WriterAgent
 from novelforge.context.assembler import ContextAssembler
 from novelforge.core.config import AppConfig, load_config
 from novelforge.core.exceptions import PersistenceError, WorkflowError
@@ -17,6 +17,7 @@ from novelforge.core.models import (
     BatchChapterResult,
     BatchWriteReport,
     Chapter,
+    ContinuityAuditReport,
     ReviewReport,
     Story,
 )
@@ -61,6 +62,7 @@ class NovelForgeEngine:
         self.writer = WriterAgent(self.llm)
         self.critic = CriticAgent(self.llm)
         self.editor = EditorAgent(self.llm)
+        self.continuity_auditor = ContinuityAuditorAgent(self.llm)
         self.story: Story | None = None
         self.last_review: dict[int, ReviewReport] = {}
         self.current_auto_revisor: AutoRevisor | None = None
@@ -156,6 +158,33 @@ class NovelForgeEngine:
         story.touch()
         self.save_state()
         self.bus.emit("chapter_reviewed", {"story_id": str(story.id), "chapter": chapter_index})
+        return report
+
+    def audit_chapter_continuity(self, chapter_index: int) -> ContinuityAuditReport:
+        story = self._require_story()
+        chapter = story.chapters.get(chapter_index)
+        if chapter is None or not chapter.content:
+            raise WorkflowError(f"Chapter {chapter_index} has no content to audit.")
+        outline = None
+        try:
+            outline = story.get_outline(chapter_index)
+        except KeyError:
+            outline = None
+        query = outline.summary if outline else chapter.summary or chapter.title
+        longform_context = self.longform_manager.get_enhanced_context(chapter_index, story, query=query)
+        report = self.continuity_auditor.audit_chapter(story, chapter_index, chapter.content, longform_context)
+        story.continuity_reports[chapter_index] = report
+        story.touch()
+        self.save_state()
+        self.bus.emit(
+            "chapter_continuity_audited",
+            {
+                "story_id": str(story.id),
+                "chapter": chapter_index,
+                "risk_score": report.risk_score,
+                "passed": report.passed,
+            },
+        )
         return report
 
     def apply_revision(self, chapter_index: int, revised_content: str | None = None) -> Chapter:
@@ -478,6 +507,7 @@ class NovelForgeEngine:
         memory = result.get("memory", {}) if isinstance(result, dict) else {}
         cards = memory.get("memory_cards", []) if isinstance(memory, dict) else []
         if not cards:
+            self._audit_processed_chapter(story, chapter)
             return
         self.vector_store.add(
             "memory_cards",
@@ -494,6 +524,18 @@ class NovelForgeEngine:
             ],
             [card.id for card in cards],
         )
+        self._audit_processed_chapter(story, chapter)
+
+    def _audit_processed_chapter(self, story: Story, chapter: Chapter) -> None:
+        outline = None
+        try:
+            outline = story.get_outline(chapter.index)
+        except KeyError:
+            outline = None
+        query = outline.summary if outline else chapter.summary or chapter.title
+        longform_context = self.longform_manager.get_enhanced_context(chapter.index, story, query=query)
+        report = self.continuity_auditor.audit_chapter(story, chapter.index, chapter.content, longform_context)
+        story.continuity_reports[chapter.index] = report
 
     def _index_extracted_memory(self, extraction) -> None:
         characters = getattr(extraction, "characters", [])

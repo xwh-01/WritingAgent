@@ -50,6 +50,11 @@ def review_chapter(chapter_index: int, story_id: str = Query(...)) -> ReviewResp
     return ReviewResponse(report=get_engine(story_id).request_review(chapter_index))
 
 
+@router.post("/{chapter_index}/audit")
+def audit_chapter_continuity(chapter_index: int, story_id: str = Query(...)) -> dict:
+    return get_engine(story_id).audit_chapter_continuity(chapter_index).model_dump()
+
+
 @router.put("/{chapter_index}/revise", response_model=ChapterResponse)
 def revise_chapter(chapter_index: int, payload: ReviseRequest, story_id: str = Query(...)) -> ChapterResponse:
     return ChapterResponse(chapter=get_engine(story_id).apply_revision(chapter_index, payload.revised_content))
@@ -88,7 +93,14 @@ def auto_write_chapter(
 def get_auto_revision_report(chapter_index: int, story_id: str = Query(...)) -> dict:
     engine = get_engine(story_id)
     report = engine.story.auto_revision_reports.get(chapter_index)
-    return report.model_dump() if report else {"error": "report_not_found"}
+    continuity = engine.story.continuity_reports.get(chapter_index)
+    if report:
+        payload = report.model_dump()
+        payload["continuity_report"] = continuity.model_dump() if continuity else None
+        return payload
+    if continuity:
+        return {"continuity_report": continuity.model_dump()}
+    return {"error": "report_not_found"}
 
 
 @router.get("/{chapter_index}/report.md", response_class=PlainTextResponse)

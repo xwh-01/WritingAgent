@@ -119,6 +119,23 @@ class RevisionIssue(BaseModel):
     description: str
 
 
+class ContinuityIssue(BaseModel):
+    dimension: str
+    severity: str = "medium"
+    description: str
+    evidence: str = ""
+    suggestion: str = ""
+
+
+class ContinuityAuditReport(BaseModel):
+    chapter_index: int
+    risk_score: float = 0.0
+    passed: bool = True
+    issues: list[ContinuityIssue] = Field(default_factory=list)
+    checked_constraints: list[str] = Field(default_factory=list)
+    summary: str = ""
+
+
 class QualityReviewReport(BaseModel):
     scores: QualityScores = Field(default_factory=QualityScores)
     issues: list[RevisionIssue] = Field(default_factory=list)
@@ -253,6 +270,7 @@ class Story(BaseModel):
     story_bible: StoryBible = Field(default_factory=StoryBible)
     memory_cards: list[MemoryCard] = Field(default_factory=list)
     auto_revision_reports: dict[int, AutoRevisionReport] = Field(default_factory=dict)
+    continuity_reports: dict[int, ContinuityAuditReport] = Field(default_factory=dict)
     batch_reports: list[BatchWriteReport] = Field(default_factory=list)
     current_chapter: int = 0
     status: str = "planning"

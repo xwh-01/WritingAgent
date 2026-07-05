@@ -48,6 +48,19 @@ Retrieved memories are reranked before they enter the prompt. The ranker combine
 
 This avoids stuffing every retrieved item into the prompt and makes later chapters more likely to see the most relevant continuity facts.
 
+## Continuity Auditor
+
+After a chapter is written or revised, NovelForge runs a continuity audit and stores the report in
+`story.continuity_reports`. The auditor checks:
+
+- story bible and continuity constraint violations
+- overdue foreshadowing
+- character-state contradictions
+- causal or location transitions
+- chapter-goal mismatch
+
+The report is available through `GET /chapters/{chapter_index}/report` and is shown in the workspace quality panel.
+
 ## Chapter Context Pack
 
 The context pack is built for one target chapter and may include:

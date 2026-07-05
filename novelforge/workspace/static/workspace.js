@@ -321,19 +321,27 @@ function renderReview(report) {
 function renderReport(report) {
     if (!report) {
         const saved = state.story?.auto_revision_reports?.[state.activeChapter];
-        report = saved || null;
+        const continuity = state.story?.continuity_reports?.[state.activeChapter];
+        report = saved || (continuity ? { continuity_report: continuity } : null);
     }
     if (!report) {
         els.qualityReport.innerHTML = `<div class="score-row">No report</div>`;
         return;
     }
     const rows = [];
-    rows.push(`<div class="score-row"><strong>${Number(report.final_score || 0).toFixed(2)}</strong> · ${report.passed ? "passed" : "not passed"}</div>`);
-    for (const round of report.rounds || []) {
-        rows.push(`<div class="score-row">Round ${round.round}: <strong>${Number(round.total_score || 0).toFixed(2)}</strong></div>`);
-        for (const issue of round.review_report?.issues || []) rows.push(issueRow(issue));
+    if (report.final_score != null || report.rounds) {
+        rows.push(`<div class="score-row"><strong>${Number(report.final_score || 0).toFixed(2)}</strong> · ${report.passed ? "passed" : "not passed"}</div>`);
+        for (const round of report.rounds || []) {
+            rows.push(`<div class="score-row">Round ${round.round}: <strong>${Number(round.total_score || 0).toFixed(2)}</strong></div>`);
+            for (const issue of round.review_report?.issues || []) rows.push(issueRow(issue));
+        }
+        for (const issue of report.residual_issues || []) rows.push(issueRow(issue));
     }
-    for (const issue of report.residual_issues || []) rows.push(issueRow(issue));
+    const continuity = report.continuity_report || report;
+    if (continuity && continuity.risk_score != null) {
+        rows.push(`<div class="score-row">Continuity risk: <strong>${Number(continuity.risk_score || 0).toFixed(1)}</strong> · ${continuity.passed ? "passed" : "risk"}</div>`);
+        for (const issue of continuity.issues || []) rows.push(issueRow(issue));
+    }
     els.qualityReport.innerHTML = rows.join("");
 }
 

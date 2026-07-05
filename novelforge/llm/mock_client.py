@@ -12,6 +12,18 @@ from novelforge.llm.base import LLMClient
 class MockLLMClient(LLMClient):
     def chat_completion(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         prompt = "\n".join(message.get("content", "") for message in messages)
+        if "continuity_audit" in prompt:
+            return json.dumps(
+                {
+                    "chapter_index": 1,
+                    "risk_score": 2.0,
+                    "passed": True,
+                    "issues": [],
+                    "checked_constraints": ["mock continuity constraint checked"],
+                    "summary": "Mock continuity audit passed.",
+                },
+                ensure_ascii=False,
+            )
         if "memory_extract" in prompt:
             return json.dumps(
                 {

@@ -151,6 +151,24 @@ class DashboardDataProvider:
                         "passed": report.passed,
                     }
                 )
+        reported_chapters = {item["chapter"] for item in trend}
+        for chapter_index, report in sorted(self.story.continuity_reports.items()):
+            if chapter_index in reported_chapters:
+                for item in trend:
+                    if item["chapter"] == chapter_index:
+                        item["continuity_risk"] = report.risk_score
+                        item["continuity_passed"] = report.passed
+                continue
+            trend.append(
+                {
+                    "chapter": chapter_index,
+                    "round": 0,
+                    "total_score": max(0.0, 10.0 - report.risk_score),
+                    "continuity_risk": report.risk_score,
+                    "continuity_passed": report.passed,
+                    "passed": report.passed,
+                }
+            )
         return trend
 
     def _prepare_story_overview(self) -> dict[str, Any]:
@@ -175,6 +193,8 @@ class DashboardDataProvider:
             "event_count": len(self.story.causal_events),
             "summary_count": len(self.story.chapter_summaries),
             "auto_report_count": len(self.story.auto_revision_reports),
+            "continuity_report_count": len(self.story.continuity_reports),
+            "continuity_risk_count": sum(1 for report in self.story.continuity_reports.values() if not report.passed),
         }
 
     def _estimate_dialogue_ratio(self, content: str) -> float:
