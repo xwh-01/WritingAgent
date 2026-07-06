@@ -25,8 +25,19 @@ class EditorAgent(BaseAgent):
         return self._chat(system, user).strip()
 
     def polish_prose(self, content: str, instructions: str) -> str:
-        system = "你是小说文笔润色编辑。按用户指令改写，不改变核心剧情。"
-        return self._chat(system, f"润色指令: {instructions}\n正文: {content}").strip()
+        system = (
+            "你是严厉但克制的小说文笔润色编辑。你的任务是把草稿改成可读性更强的连载正文。"
+            "必须保留核心剧情、人物行为、设定和因果，不新增大幅支线。"
+            "重点改进：场景质感、动作细节、心理层次、对话自然度、句式节奏和结尾余味。"
+            "删除提纲腔、总结腔、空泛热血、重复表达。只输出润色后的完整正文。"
+        )
+        user = (
+            "prose_polish\n"
+            f"润色指令: {instructions}\n"
+            f"草稿正文:\n{content}\n"
+            "只输出润色后的小说正文。"
+        )
+        return self._chat(system, user).strip()
 
     def revise_from_quality_report(
         self,

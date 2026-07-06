@@ -122,6 +122,7 @@ class NovelForgeEngine:
             chapter = self.generate_beats(chapter_index)
         context = self.context_assembler.assemble_writing_context(chapter_index, story)
         content = self.writer.write_chapter(chapter_index, outline, chapter.beats, context, story.style_guide)
+        content = self._polish_draft_if_enabled(story, chapter_index, content)
         chapter.update_content(content, status="draft", summary=outline.summary)
         story.chapters[chapter_index] = chapter
         story.current_chapter = chapter_index
@@ -131,6 +132,21 @@ class NovelForgeEngine:
         self.save_state()
         self.bus.emit("chapter_written", {"story_id": str(story.id), "chapter": chapter_index})
         return chapter
+
+    def _polish_draft_if_enabled(self, story: Story, chapter_index: int, content: str) -> str:
+        if not self.config.story.auto_polish_drafts:
+            return content
+        outline = story.get_outline(chapter_index)
+        instructions = (
+            f"目标字数约 {self.config.story.prose_target_words} 字；"
+            "把草稿改成更有小说质感的完整正文。"
+            "保留章节大纲、节拍和长篇记忆中的事实，不改变结局走向。"
+            "加强场景细节、人物动作、心理波动、对话潜台词和段落节奏。"
+            f"本章标题: {outline.title}；核心冲突: {outline.conflict}；"
+            f"文风: {story.style_guide or '清晰克制，有画面感，避免流水账。'}"
+        )
+        polished = self.editor.polish_prose(content, instructions)
+        return polished or content
 
     def request_review(self, chapter_index: int) -> ReviewReport:
         story = self._require_story()

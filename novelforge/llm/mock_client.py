@@ -90,6 +90,14 @@ class MockLLMClient(LLMClient):
                 },
                 ensure_ascii=False,
             )
+        if "prose_polish" in prompt:
+            return (
+                "【润色稿】\n"
+                "夜色压低了球场边缘的灯光，草叶上浮着一层细亮的水汽。\n\n"
+                "主角站在门线前，听见自己的呼吸被看台的空旷放大。那条刚刚到手的线索像一枚发烫的硬币，"
+                "压在掌心，也压在他的选择上。他知道退后一步会更安全，可有些真相一旦露出边角，就再也无法装作没看见。\n\n"
+                "哨声响起时，他向前踏出半步。风掠过耳侧，危险也随之逼近。"
+            )
         if "润色" in prompt or "revise_chapter" in prompt:
             return "【修订稿】\n" + self._last_user_text(messages)
         if "generate_outline" in prompt:

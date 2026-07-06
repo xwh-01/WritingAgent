@@ -33,6 +33,8 @@ class StoryConfig(BaseModel):
     default_chapters: int = 10
     max_context_tokens: int = 6000
     history_limit: int = 20
+    auto_polish_drafts: bool = True
+    prose_target_words: int = 1800
 
 
 class LoggingConfig(BaseModel):

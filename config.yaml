@@ -17,6 +17,8 @@ story:
   default_chapters: 10
   max_context_tokens: 6000
   history_limit: 20
+  auto_polish_drafts: true
+  prose_target_words: 1800
 
 logging:
   level: INFO
