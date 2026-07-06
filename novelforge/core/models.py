@@ -205,6 +205,8 @@ class AutonomousRunReport(BaseModel):
     start_chapter: int
     end_chapter: int
     use_auto_revision: bool = True
+    planning_strategy: str = "rule"
+    planning_notes: str = ""
     status: str = "planned"
     tasks: list[AgentTask] = Field(default_factory=list)
     completed_tasks: int = 0

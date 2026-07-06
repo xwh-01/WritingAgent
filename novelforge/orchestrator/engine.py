@@ -456,7 +456,13 @@ class NovelForgeEngine:
         run.updated_at = utc_now()
         story.touch()
         self.save_state()
-        self._emit_agent_progress(run, "SupervisorAgent", "plan_run", "Planned autonomous writing run.", progress_callback)
+        self._emit_agent_progress(
+            run,
+            "SupervisorAgent",
+            "plan_run",
+            f"Planned with {run.planning_strategy}: {run.planning_notes or run.summary}",
+            progress_callback,
+        )
 
         for task in run.tasks:
             task.status = "running"
@@ -584,6 +590,7 @@ class NovelForgeEngine:
                 "stage": action,
                 "progress_current": run.completed_tasks,
                 "progress_total": len(run.tasks),
+                "planning_strategy": run.planning_strategy,
             }
         )
 

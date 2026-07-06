@@ -485,6 +485,79 @@ textarea:focus {
     line-height: 1.5;
 }
 
+.agent-trace {
+    display: grid;
+    gap: 6px;
+}
+
+.trace-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel-strong);
+    font-size: 12px;
+}
+
+.trace-summary strong {
+    color: var(--teal);
+}
+
+.trace-summary span,
+.trace-note,
+.trace-meta,
+.trace-text {
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.trace-note {
+    padding: 0 2px 2px;
+}
+
+.trace-row {
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel-strong);
+}
+
+.trace-row.running {
+    border-left-color: var(--blue);
+}
+
+.trace-row.completed {
+    border-left-color: var(--teal);
+}
+
+.trace-row.failed {
+    border-left-color: var(--red);
+}
+
+.trace-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.trace-top strong {
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 11px;
+}
+
+.trace-text {
+    margin-top: 3px;
+    line-height: 1.4;
+}
+
 .event-log {
     display: grid;
     gap: 2px;

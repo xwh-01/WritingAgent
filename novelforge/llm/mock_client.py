@@ -12,6 +12,51 @@ from novelforge.llm.base import LLMClient
 class MockLLMClient(LLMClient):
     def chat_completion(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         prompt = "\n".join(message.get("content", "") for message in messages)
+        if "supervisor_plan" in prompt:
+            return json.dumps(
+                {
+                    "strategy": "llm_validated_chapter_pipeline",
+                    "notes": "Mock Supervisor chose a validated chapter pipeline.",
+                    "tasks": [
+                        {
+                            "agent": "PlannerAgent",
+                            "action": "ensure_outline",
+                            "reason": "A chapter map is required before scene work.",
+                            "chapter_index": None,
+                            "input_summary": "Ensure outline coverage.",
+                        },
+                        {
+                            "agent": "PlannerAgent",
+                            "action": "generate_beats",
+                            "reason": "Scene beats anchor the first chapter.",
+                            "chapter_index": 1,
+                            "input_summary": "Generate scene beats.",
+                        },
+                        {
+                            "agent": "WriterAgent",
+                            "action": "write_chapter",
+                            "reason": "Draft the chapter before audits.",
+                            "chapter_index": 1,
+                            "input_summary": "Write the requested chapter.",
+                        },
+                        {
+                            "agent": "ContinuityAuditorAgent",
+                            "action": "audit_chapter_continuity",
+                            "reason": "Check continuity after drafting.",
+                            "chapter_index": 1,
+                            "input_summary": "Audit continuity.",
+                        },
+                        {
+                            "agent": "MemoryEngine",
+                            "action": "memory_checkpoint",
+                            "reason": "Persist chapter memory.",
+                            "chapter_index": 1,
+                            "input_summary": "Update memory.",
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            )
         if "continuity_audit" in prompt:
             return json.dumps(
                 {

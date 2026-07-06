@@ -26,6 +26,7 @@ def test_agentic_writing_run_executes_explainable_task_queue(test_config: AppCon
     )
 
     assert run.status == "completed"
+    assert run.planning_strategy == "llm_validated_chapter_pipeline"
     assert run.failed_tasks == 0
     assert run.completed_tasks == len(run.tasks)
     assert {task.action for task in run.tasks} >= {
@@ -41,6 +42,7 @@ def test_agentic_writing_run_executes_explainable_task_queue(test_config: AppCon
     assert all(task.status == "completed" for task in run.tasks)
     assert any(event.get("agent") == "SupervisorAgent" for event in events)
     assert any(event.get("action") == "memory_checkpoint" for event in events)
+    assert any(task.metadata.get("planned_by") == "supervisor_guardrail" for task in run.tasks)
 
 
 def test_agentic_run_api_background_job() -> None:
@@ -76,4 +78,5 @@ def test_agentic_run_api_background_job() -> None:
     assert payload["id"] == job_id
     assert payload["status"] == "agentic_finished"
     assert payload["autonomous_result"]["status"] == "completed"
+    assert payload["autonomous_result"]["planning_strategy"] == "llm_validated_chapter_pipeline"
     assert any(event.get("agent") for event in payload["events"])

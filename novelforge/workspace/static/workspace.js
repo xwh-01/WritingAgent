@@ -26,7 +26,7 @@ function bindElements() {
         "storyList", "chapterList", "storyTitle", "storyPremise", "outlineBtn", "writeBtn", "saveBtn",
         "agentRunBtn", "batchBtn", "dashboardBtn", "outlineStrip", "chapterTitleInput", "chapterEditor", "reloadStoryBtn",
         "beatsBtn", "reviewBtn", "autoBtn", "reportBtn", "jobStatus", "qualityReport",
-        "longformMetrics", "eventLog", "activeChapterMeta",
+        "longformMetrics", "eventLog", "activeChapterMeta", "agentTrace",
     ]) {
         els[id] = document.getElementById(id);
     }
@@ -96,6 +96,7 @@ function renderWorkspace() {
     renderEditor();
     renderLongformMetrics();
     renderReport(null);
+    renderAgentTrace();
     renderEvents();
     renderIcons();
 }
@@ -220,6 +221,7 @@ function renderEvents() {
 
 function renderJobEvents(job) {
     state.lastJobEvents = job.events || [];
+    renderAgentTrace(job);
     const rows = state.lastJobEvents.slice(-12).reverse().map(event => {
         const chapter = event.chapter_index ? `ch${event.chapter_index} · ` : "";
         const agent = event.agent ? `${event.agent}${event.action ? `/${event.action}` : ""} · ` : "";
@@ -329,12 +331,14 @@ async function pollJob() {
             if (job.result) renderReport(job.result);
             if (job.batch_result) renderBatchResult(job.batch_result);
             if (job.autonomous_result) renderAgenticResult(job.autonomous_result);
+            if (job.autonomous_result) renderAgentTrace(job.autonomous_result);
             await loadStory(state.story.id);
         }
     }, 1200);
 }
 
 function renderAgenticResult(report) {
+    renderAgentTrace(report);
     const rows = [
         `<div class="score-row"><strong>${escapeHtml(report.status)}</strong> · ${report.completed_tasks}/${(report.tasks || []).length} tasks · ${report.failed_tasks} failed</div>`
     ];
@@ -343,6 +347,57 @@ function renderAgenticResult(report) {
         rows.push(`<div class="event-row">${escapeHtml(chapter)}${escapeHtml(task.agent)} / ${escapeHtml(task.action)} · ${escapeHtml(task.status)} · ${escapeHtml(task.output_summary || task.error || task.reason || "")}</div>`);
     }
     els.qualityReport.innerHTML = rows.join("");
+}
+
+function renderAgentTrace(source = null) {
+    if (!els.agentTrace) return;
+    const run = source?.autonomous_result || (source?.tasks ? source : latestAgentRun());
+    if (run?.tasks?.length) {
+        const header = `
+            <div class="trace-summary">
+                <strong>${escapeHtml(run.planning_strategy || "agentic")}</strong>
+                <span>${escapeHtml(run.status || "planned")} · ${run.completed_tasks || 0}/${run.tasks.length}</span>
+            </div>
+            ${run.planning_notes ? `<div class="trace-note">${escapeHtml(run.planning_notes)}</div>` : ""}
+        `;
+        const rows = run.tasks.map(task => {
+            const chapter = task.chapter_index ? `ch${task.chapter_index}` : "story";
+            const note = task.output_summary || task.error || task.reason || "";
+            return `
+                <div class="trace-row ${escapeHtml(task.status || "pending")}">
+                    <div class="trace-top">
+                        <span>${task.step_index}. ${escapeHtml(task.agent)}</span>
+                        <strong>${escapeHtml(task.action)}</strong>
+                    </div>
+                    <div class="trace-meta">${escapeHtml(chapter)} · ${escapeHtml(task.status || "pending")}</div>
+                    <div class="trace-text">${escapeHtml(note)}</div>
+                </div>
+            `;
+        }).join("");
+        els.agentTrace.innerHTML = header + rows;
+        return;
+    }
+    const events = source?.events || state.lastJobEvents || [];
+    const agentEvents = events.filter(event => event.agent || event.action).slice(-8).reverse();
+    if (agentEvents.length) {
+        els.agentTrace.innerHTML = agentEvents.map(event => `
+            <div class="trace-row running">
+                <div class="trace-top">
+                    <span>${escapeHtml(event.agent || "Agent")}</span>
+                    <strong>${escapeHtml(event.action || event.stage || "working")}</strong>
+                </div>
+                <div class="trace-meta">${event.chapter_index ? `ch${event.chapter_index}` : "story"} · live</div>
+                <div class="trace-text">${escapeHtml(event.message || "Working")}</div>
+            </div>
+        `).join("");
+        return;
+    }
+    els.agentTrace.innerHTML = `<div class="event-row">No agent run yet</div>`;
+}
+
+function latestAgentRun() {
+    const runs = state.story?.agent_runs || [];
+    return runs.length ? runs[runs.length - 1] : null;
 }
 
 function renderBatchResult(report) {
