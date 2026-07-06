@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from novelforge.core.models import AutoRevisionReport, BatchWriteReport
+from novelforge.core.models import AutoRevisionReport, AutonomousRunReport, BatchWriteReport
 
 
 @dataclass
@@ -24,6 +24,7 @@ class AutoRevisionJob:
     events: list[dict[str, Any]] = field(default_factory=list)
     result: AutoRevisionReport | None = None
     batch_result: BatchWriteReport | None = None
+    autonomous_result: AutonomousRunReport | None = None
     error: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -44,6 +45,7 @@ class AutoRevisionJob:
             "updated_at": self.updated_at.isoformat(),
             "result": self.result.model_dump() if self.result else None,
             "batch_result": self.batch_result.model_dump() if self.batch_result else None,
+            "autonomous_result": self.autonomous_result.model_dump() if self.autonomous_result else None,
         }
 
 
@@ -89,6 +91,34 @@ class AutoRevisionJobRegistry:
         thread = threading.Thread(
             target=self._run_batch,
             args=(job.id, engine, start_chapter, end_chapter, use_auto_revision),
+            daemon=True,
+        )
+        with self._lock:
+            self._threads[job.id] = thread
+        thread.start()
+        return job
+
+    def start_agentic_run(
+        self,
+        engine,
+        story_id: str,
+        objective: str,
+        start_chapter: int,
+        end_chapter: int,
+        use_auto_revision: bool = True,
+    ) -> AutoRevisionJob:
+        job = AutoRevisionJob(
+            id=f"job-{uuid4().hex[:10]}",
+            story_id=story_id,
+            chapter_index=start_chapter,
+            progress_total=0,
+            message=f"Queued agentic writing run for chapters {start_chapter}-{end_chapter}",
+        )
+        with self._lock:
+            self._jobs[job.id] = job
+        thread = threading.Thread(
+            target=self._run_agentic,
+            args=(job.id, engine, objective, start_chapter, end_chapter, use_auto_revision),
             daemon=True,
         )
         with self._lock:
@@ -198,6 +228,65 @@ class AutoRevisionJobRegistry:
             self.record_progress(job_id, f"Batch failed: {exc}", status="failed", stage="failed")
             self._update(job_id, status="failed", error=str(exc), message=str(exc))
 
+    def _run_agentic(
+        self,
+        job_id: str,
+        engine,
+        objective: str,
+        start_chapter: int,
+        end_chapter: int,
+        use_auto_revision: bool,
+    ) -> None:
+        try:
+            self.record_progress(
+                job_id,
+                f"Starting agentic writing run for chapters {start_chapter}-{end_chapter}",
+                progress_current=0,
+                status="running_agentic",
+                stage="start",
+            )
+
+            def progress_callback(event: dict[str, object]) -> None:
+                current = event.get("progress_current")
+                total = event.get("progress_total")
+                chapter = event.get("chapter_index")
+                status = event.get("status")
+                stage = event.get("stage")
+                self.record_progress(
+                    job_id,
+                    str(event.get("message") or "Working"),
+                    progress_current=current if isinstance(current, int) else None,
+                    progress_total=total if isinstance(total, int) else None,
+                    status=status if isinstance(status, str) else None,
+                    chapter_index=chapter if isinstance(chapter, int) else None,
+                    stage=stage if isinstance(stage, str) else None,
+                    agent=event.get("agent") if isinstance(event.get("agent"), str) else None,
+                    action=event.get("action") if isinstance(event.get("action"), str) else None,
+                    task_id=event.get("task_id") if isinstance(event.get("task_id"), str) else None,
+                    run_id=event.get("run_id") if isinstance(event.get("run_id"), str) else None,
+                )
+
+            result = engine.agentic_writing_run(
+                objective,
+                start_chapter,
+                end_chapter,
+                use_auto_revision,
+                progress_callback=progress_callback,
+            )
+            status = "agentic_finished" if result.failed_tasks == 0 else "agentic_finished_with_failures"
+            self.record_progress(
+                job_id,
+                result.summary,
+                progress_current=result.completed_tasks,
+                progress_total=len(result.tasks),
+                status=status,
+                stage="finished",
+            )
+            self._update(job_id, status=status, autonomous_result=result, current_round=result.completed_tasks)
+        except Exception as exc:
+            self.record_progress(job_id, f"Agentic run failed: {exc}", status="failed", stage="failed")
+            self._update(job_id, status="failed", error=str(exc), message=str(exc))
+
     def record_progress(
         self,
         job_id: str,
@@ -207,6 +296,10 @@ class AutoRevisionJobRegistry:
         status: str | None = None,
         chapter_index: int | None = None,
         stage: str | None = None,
+        agent: str | None = None,
+        action: str | None = None,
+        task_id: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -226,6 +319,10 @@ class AutoRevisionJobRegistry:
                 "message": message,
                 "chapter_index": chapter_index,
                 "stage": stage,
+                "agent": agent,
+                "action": action,
+                "task_id": task_id,
+                "run_id": run_id,
                 "progress_current": job.progress_current,
                 "progress_total": job.progress_total,
             }
@@ -240,6 +337,7 @@ class AutoRevisionJobRegistry:
         status: str | None = None,
         result: AutoRevisionReport | None = None,
         batch_result: BatchWriteReport | None = None,
+        autonomous_result: AutonomousRunReport | None = None,
         current_round: int | None = None,
         error: str | None = None,
         message: str | None = None,
@@ -252,6 +350,8 @@ class AutoRevisionJobRegistry:
                 job.result = result
             if batch_result is not None:
                 job.batch_result = batch_result
+            if autonomous_result is not None:
+                job.autonomous_result = autonomous_result
             if current_round is not None:
                 job.current_round = current_round
             if error is not None:

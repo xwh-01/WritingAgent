@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-
-from novelforge.api.schemas import BatchWriteRequest, CreateStoryRequest, OutlineRequest, OutlineResponse, StatusResponse, StoryResponse
+from novelforge.api.schemas import (
+    AgenticRunRequest,
+    BatchWriteRequest,
+    CreateStoryRequest,
+    OutlineRequest,
+    OutlineResponse,
+    StatusResponse,
+    StoryResponse,
+)
 from novelforge.api.state import AUTO_REVISION_JOBS, ENGINES, get_engine
 from novelforge.orchestrator.engine import NovelForgeEngine
 
@@ -57,6 +64,27 @@ def batch_write(story_id: str, payload: BatchWriteRequest) -> dict:
         )
         return job.to_dict()
     return engine.batch_write_chapters(
+        payload.start_chapter,
+        payload.end_chapter,
+        payload.use_auto_revision,
+    ).model_dump()
+
+
+@router.post("/{story_id}/agentic-run")
+def agentic_writing_run(story_id: str, payload: AgenticRunRequest) -> dict:
+    engine = get_engine(story_id)
+    if payload.background:
+        job = AUTO_REVISION_JOBS.start_agentic_run(
+            engine,
+            story_id,
+            payload.objective,
+            payload.start_chapter,
+            payload.end_chapter,
+            payload.use_auto_revision,
+        )
+        return job.to_dict()
+    return engine.agentic_writing_run(
+        payload.objective,
         payload.start_chapter,
         payload.end_chapter,
         payload.use_auto_revision,

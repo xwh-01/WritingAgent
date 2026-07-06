@@ -8,18 +8,27 @@ from pathlib import Path
 from typing import Callable
 from uuid import UUID
 
-from novelforge.agents import ContinuityAuditorAgent, CriticAgent, EditorAgent, PlannerAgent, WriterAgent
+from novelforge.agents import (
+    ContinuityAuditorAgent,
+    CriticAgent,
+    EditorAgent,
+    PlannerAgent,
+    SupervisorAgent,
+    WriterAgent,
+)
 from novelforge.context.assembler import ContextAssembler
 from novelforge.core.config import AppConfig, load_config
 from novelforge.core.exceptions import PersistenceError, WorkflowError
 from novelforge.core.models import (
     AutoRevisionReport,
+    AutonomousRunReport,
     BatchChapterResult,
     BatchWriteReport,
     Chapter,
     ContinuityAuditReport,
     ReviewReport,
     Story,
+    utc_now,
 )
 from novelforge.llm import build_llm_client
 from novelforge.longform.manager import LongformManager
@@ -59,6 +68,7 @@ class NovelForgeEngine:
             self.longform_manager,
         )
         self.planner = PlannerAgent(self.llm)
+        self.supervisor = SupervisorAgent(self.llm)
         self.writer = WriterAgent(self.llm)
         self.critic = CriticAgent(self.llm)
         self.editor = EditorAgent(self.llm)
@@ -422,6 +432,160 @@ class NovelForgeEngine:
             },
         )
         return report
+
+    def agentic_writing_run(
+        self,
+        objective: str,
+        start_chapter: int,
+        end_chapter: int,
+        use_auto_revision: bool = True,
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
+    ) -> AutonomousRunReport:
+        if start_chapter < 1 or end_chapter < start_chapter:
+            raise WorkflowError("Invalid chapter range.")
+        story = self._require_story()
+        run = self.supervisor.plan_writing_run(
+            story=story,
+            objective=objective,
+            start_chapter=start_chapter,
+            end_chapter=end_chapter,
+            use_auto_revision=use_auto_revision,
+        )
+        story.agent_runs.append(run)
+        run.status = "running"
+        run.updated_at = utc_now()
+        story.touch()
+        self.save_state()
+        self._emit_agent_progress(run, "SupervisorAgent", "plan_run", "Planned autonomous writing run.", progress_callback)
+
+        for task in run.tasks:
+            task.status = "running"
+            task.started_at = utc_now()
+            run.updated_at = utc_now()
+            story.touch()
+            self.save_state()
+            self._emit_agent_progress(
+                run,
+                task.agent,
+                task.action,
+                task.reason,
+                progress_callback,
+                chapter_index=task.chapter_index,
+                task_id=task.id,
+            )
+            try:
+                task.output_summary = self._execute_agent_task(task, end_chapter)
+                task.status = "completed"
+                task.completed_at = utc_now()
+                run.completed_tasks += 1
+                self._emit_agent_progress(
+                    run,
+                    task.agent,
+                    task.action,
+                    task.output_summary,
+                    progress_callback,
+                    chapter_index=task.chapter_index,
+                    task_id=task.id,
+                )
+            except Exception as exc:
+                task.status = "failed"
+                task.error = str(exc)
+                task.completed_at = utc_now()
+                run.failed_tasks += 1
+                self._emit_agent_progress(
+                    run,
+                    task.agent,
+                    task.action,
+                    f"Failed: {exc}",
+                    progress_callback,
+                    chapter_index=task.chapter_index,
+                    task_id=task.id,
+                )
+                break
+            finally:
+                run.updated_at = utc_now()
+                story.touch()
+                self.save_state()
+
+        run.status = "failed" if run.failed_tasks else "completed"
+        run.summary = (
+            f"Agentic run {run.status}: {run.completed_tasks}/{len(run.tasks)} tasks completed, "
+            f"{run.failed_tasks} failed."
+        )
+        run.updated_at = utc_now()
+        story.touch()
+        self.save_state()
+        self.bus.emit(
+            "agentic_run_finished",
+            {
+                "story_id": str(story.id),
+                "run_id": run.id,
+                "status": run.status,
+                "completed_tasks": run.completed_tasks,
+                "failed_tasks": run.failed_tasks,
+            },
+        )
+        return run
+
+    def _execute_agent_task(self, task, end_chapter: int) -> str:
+        story = self._require_story()
+        if task.action == "ensure_outline":
+            before = len(story.outlines)
+            if before < end_chapter:
+                self._ensure_outlines(end_chapter)
+                return f"Generated outlines through chapter {end_chapter}."
+            return f"Outline already covers {before} chapters."
+        if task.chapter_index is None:
+            raise WorkflowError(f"Task {task.id} requires a chapter index.")
+        if task.action == "generate_beats":
+            chapter = self.generate_beats(task.chapter_index)
+            return f"Generated {len(chapter.beats)} scene beats."
+        if task.action == "write_chapter":
+            chapter = self.write_chapter(task.chapter_index)
+            return f"Wrote draft with {len(chapter.content)} characters."
+        if task.action == "auto_write_chapter":
+            report = self.auto_write_chapter(task.chapter_index)
+            return f"Auto-revision finished with score {report.final_score:.2f}; passed={report.passed}."
+        if task.action == "audit_chapter_continuity":
+            report = self.audit_chapter_continuity(task.chapter_index)
+            return f"Continuity risk {report.risk_score:.1f}; passed={report.passed}."
+        if task.action == "memory_checkpoint":
+            chapter = story.chapters.get(task.chapter_index)
+            if chapter is None or not chapter.content:
+                raise WorkflowError(f"Chapter {task.chapter_index} has no content to index.")
+            self._process_chapter_memory(story, chapter)
+            return (
+                f"Memory updated: {len(story.memory_cards)} cards, "
+                f"{len(story.chapter_summaries)} chapter summaries."
+            )
+        raise WorkflowError(f"Unknown agent task action: {task.action}")
+
+    def _emit_agent_progress(
+        self,
+        run: AutonomousRunReport,
+        agent: str,
+        action: str,
+        message: str,
+        progress_callback: Callable[[dict[str, object]], None] | None,
+        chapter_index: int | None = None,
+        task_id: str | None = None,
+    ) -> None:
+        if progress_callback is None:
+            return
+        progress_callback(
+            {
+                "status": "running_agentic" if run.status == "running" else run.status,
+                "run_id": run.id,
+                "task_id": task_id,
+                "agent": agent,
+                "action": action,
+                "message": message,
+                "chapter_index": chapter_index,
+                "stage": action,
+                "progress_current": run.completed_tasks,
+                "progress_total": len(run.tasks),
+            }
+        )
 
     def get_auto_status(self) -> dict[str, object]:
         if self.current_auto_revisor is None:

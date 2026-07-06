@@ -182,6 +182,38 @@ class BatchWriteReport(BaseModel):
     stopped: bool = False
 
 
+class AgentTask(BaseModel):
+    id: str
+    step_index: int
+    agent: str
+    action: str
+    reason: str = ""
+    chapter_index: int | None = None
+    status: str = "pending"
+    input_summary: str = ""
+    output_summary: str = ""
+    error: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutonomousRunReport(BaseModel):
+    id: str
+    objective: str
+    start_chapter: int
+    end_chapter: int
+    use_auto_revision: bool = True
+    status: str = "planned"
+    tasks: list[AgentTask] = Field(default_factory=list)
+    completed_tasks: int = 0
+    failed_tasks: int = 0
+    summary: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class Foreshadowing(BaseModel):
     id: str
     description: str
@@ -272,6 +304,7 @@ class Story(BaseModel):
     auto_revision_reports: dict[int, AutoRevisionReport] = Field(default_factory=dict)
     continuity_reports: dict[int, ContinuityAuditReport] = Field(default_factory=dict)
     batch_reports: list[BatchWriteReport] = Field(default_factory=list)
+    agent_runs: list[AutonomousRunReport] = Field(default_factory=list)
     current_chapter: int = 0
     status: str = "planning"
     created_at: datetime = Field(default_factory=utc_now)

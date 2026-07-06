@@ -24,7 +24,7 @@ function bindElements() {
     for (const id of [
         "connectionState", "refreshStoriesBtn", "newStoryForm", "newTitle", "newPremise", "newGenre",
         "storyList", "chapterList", "storyTitle", "storyPremise", "outlineBtn", "writeBtn", "saveBtn",
-        "batchBtn", "dashboardBtn", "outlineStrip", "chapterTitleInput", "chapterEditor", "reloadStoryBtn",
+        "agentRunBtn", "batchBtn", "dashboardBtn", "outlineStrip", "chapterTitleInput", "chapterEditor", "reloadStoryBtn",
         "beatsBtn", "reviewBtn", "autoBtn", "reportBtn", "jobStatus", "qualityReport",
         "longformMetrics", "eventLog", "activeChapterMeta",
     ]) {
@@ -38,6 +38,7 @@ function bindEvents() {
     els.newStoryForm.addEventListener("submit", createStory);
     els.outlineBtn.addEventListener("click", generateOutline);
     els.writeBtn.addEventListener("click", writeChapter);
+    els.agentRunBtn.addEventListener("click", agenticRun);
     els.batchBtn.addEventListener("click", batchWrite);
     els.saveBtn.addEventListener("click", saveChapter);
     els.dashboardBtn.addEventListener("click", openDashboard);
@@ -221,8 +222,9 @@ function renderJobEvents(job) {
     state.lastJobEvents = job.events || [];
     const rows = state.lastJobEvents.slice(-12).reverse().map(event => {
         const chapter = event.chapter_index ? `ch${event.chapter_index} · ` : "";
+        const agent = event.agent ? `${event.agent}${event.action ? `/${event.action}` : ""} · ` : "";
         const progress = event.progress_total ? ` (${event.progress_current || 0}/${event.progress_total})` : "";
-        return `<div class="event-row">${escapeHtml(chapter)}${escapeHtml(event.message || event.stage || "Working")}${escapeHtml(progress)}</div>`;
+        return `<div class="event-row">${escapeHtml(chapter)}${escapeHtml(agent)}${escapeHtml(event.message || event.stage || "Working")}${escapeHtml(progress)}</div>`;
     });
     els.eventLog.innerHTML = rows.length ? rows.join("") : `<div class="event-row">${escapeHtml(job.message || job.status || "Working")}</div>`;
 }
@@ -257,6 +259,26 @@ async function batchWrite() {
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return;
     setStatus(`Batch ${start}-${end}`);
     const job = await postJson(`/stories/${state.story.id}/batch-write`, {
+        start_chapter: start,
+        end_chapter: end,
+        use_auto_revision: useAuto,
+        background: true,
+    });
+    state.activeJob = job.id;
+    pollJob();
+}
+
+async function agenticRun() {
+    if (!state.story) return;
+    const objective = prompt("Agent objective", `Write chapters from ${state.activeChapter} with planning, review, continuity audit, and memory updates.`);
+    if (!objective) return;
+    const start = Number(prompt("Start chapter", String(state.activeChapter)) || state.activeChapter);
+    const end = Number(prompt("End chapter", String(Math.max(start, start + 2))) || start);
+    const useAuto = confirm("Use autonomous review and revision for each chapter?");
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return;
+    setStatus(`Agent run ${start}-${end}`);
+    const job = await postJson(`/stories/${state.story.id}/agentic-run`, {
+        objective,
         start_chapter: start,
         end_chapter: end,
         use_auto_revision: useAuto,
@@ -302,13 +324,25 @@ async function pollJob() {
         const progressTotal = job.progress_total ? `/${job.progress_total}` : "";
         els.jobStatus.textContent = `${job.status} · ${progressCurrent}${progressTotal} · ${job.message || "Working"}`;
         renderJobEvents(job);
-        if (["passed", "failed", "stopped", "finished_with_residual_issues", "batch_finished", "batch_finished_with_failures"].includes(job.status)) {
+        if (["passed", "failed", "stopped", "finished_with_residual_issues", "batch_finished", "batch_finished_with_failures", "agentic_finished", "agentic_finished_with_failures"].includes(job.status)) {
             clearInterval(state.polling);
             if (job.result) renderReport(job.result);
             if (job.batch_result) renderBatchResult(job.batch_result);
+            if (job.autonomous_result) renderAgenticResult(job.autonomous_result);
             await loadStory(state.story.id);
         }
     }, 1200);
+}
+
+function renderAgenticResult(report) {
+    const rows = [
+        `<div class="score-row"><strong>${escapeHtml(report.status)}</strong> · ${report.completed_tasks}/${(report.tasks || []).length} tasks · ${report.failed_tasks} failed</div>`
+    ];
+    for (const task of report.tasks || []) {
+        const chapter = task.chapter_index ? `ch${task.chapter_index}: ` : "";
+        rows.push(`<div class="event-row">${escapeHtml(chapter)}${escapeHtml(task.agent)} / ${escapeHtml(task.action)} · ${escapeHtml(task.status)} · ${escapeHtml(task.output_summary || task.error || task.reason || "")}</div>`);
+    }
+    els.qualityReport.innerHTML = rows.join("");
 }
 
 function renderBatchResult(report) {

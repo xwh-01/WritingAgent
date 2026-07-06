@@ -27,6 +27,14 @@ class BatchWriteRequest(BaseModel):
     background: bool = True
 
 
+class AgenticRunRequest(BaseModel):
+    objective: str
+    start_chapter: int = 1
+    end_chapter: int = 1
+    use_auto_revision: bool = True
+    background: bool = True
+
+
 class ReviseRequest(BaseModel):
     revised_content: str | None = None
 
