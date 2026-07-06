@@ -9,12 +9,15 @@ def test_workspace_page_and_static_assets_render() -> None:
     client = TestClient(app)
 
     page = client.get("/workspace/")
+    trace = client.get("/agent-trace/")
     script = client.get("/workspace-static/workspace.js")
     style = client.get("/workspace-static/workspace.css")
 
     assert page.status_code == 200
     assert "NovelForge 工作台" in page.text
     assert "批量" in page.text
+    assert trace.status_code == 200
+    assert "Agent Trace" in trace.text
     assert script.status_code == 200
     assert style.status_code == 200
 

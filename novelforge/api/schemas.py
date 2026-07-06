@@ -18,6 +18,7 @@ class CreateStoryRequest(BaseModel):
 
 class OutlineRequest(BaseModel):
     num_chapters: int | None = None
+    force: bool = False
 
 
 class BatchWriteRequest(BaseModel):
@@ -33,6 +34,11 @@ class AgenticRunRequest(BaseModel):
     end_chapter: int = 1
     use_auto_revision: bool = True
     background: bool = True
+
+
+class DirectorRunRequest(BaseModel):
+    user_message: str
+    max_steps: int = 6
 
 
 class ReviseRequest(BaseModel):

@@ -8,6 +8,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 
 from novelforge import __version__
+from novelforge.agent_trace.api import router as agent_trace_router
 from novelforge.api.routes import agents, chapters, stories
 from novelforge.dashboard.api import router as dashboard_router
 from novelforge.workspace.api import router as workspace_router
@@ -18,6 +19,7 @@ app.include_router(chapters.router)
 app.include_router(agents.router)
 app.include_router(dashboard_router)
 app.include_router(workspace_router)
+app.include_router(agent_trace_router)
 
 dashboard_static = Path(__file__).parent.parent / "dashboard" / "static"
 if dashboard_static.exists():
@@ -36,6 +38,7 @@ def root() -> dict[str, str]:
         "docs": "/docs",
         "workspace": "/workspace/",
         "dashboard": "/dashboard/",
+        "agent_trace": "/agent-trace/",
     }
 
 

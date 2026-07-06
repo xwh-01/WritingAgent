@@ -12,6 +12,7 @@ from novelforge.agents import (
     ContinuityAuditorAgent,
     CriticAgent,
     EditorAgent,
+    NovelDirectorAgent,
     PlannerAgent,
     SupervisorAgent,
     WriterAgent,
@@ -20,11 +21,13 @@ from novelforge.context.assembler import ContextAssembler
 from novelforge.core.config import AppConfig, load_config
 from novelforge.core.exceptions import PersistenceError, WorkflowError
 from novelforge.core.models import (
+    AgentTraceRun,
     AutoRevisionReport,
     AutonomousRunReport,
     BatchChapterResult,
     BatchWriteReport,
     Chapter,
+    ChapterOutline,
     ContinuityAuditReport,
     ReviewReport,
     Story,
@@ -37,6 +40,7 @@ from novelforge.memory.text_store import SQLiteFTSStore
 from novelforge.memory.vector_store import ChromaVectorStore
 from novelforge.orchestrator.auto_revisor import AutoRevisor, AutoRevisorConfig
 from novelforge.orchestrator.bus import EventBus
+from novelforge.orchestrator.tool_registry import ToolRegistry
 from novelforge.storage.repository import StoryRepository
 
 
@@ -69,6 +73,7 @@ class NovelForgeEngine:
         )
         self.planner = PlannerAgent(self.llm)
         self.supervisor = SupervisorAgent(self.llm)
+        self.director = NovelDirectorAgent(self.llm)
         self.writer = WriterAgent(self.llm)
         self.critic = CriticAgent(self.llm)
         self.editor = EditorAgent(self.llm)
@@ -97,12 +102,13 @@ class NovelForgeEngine:
         self.save_state()
         return self.story
 
-    def generate_outline(self, num_chapters: int | None = None) -> list:
+    def generate_outline(self, num_chapters: int | None = None, force: bool = False) -> list:
         story = self._require_story()
-        story.outlines = self.planner.generate_outline(
-            story.premise,
-            num_chapters or self.config.story.default_chapters,
-        )
+        target_count = num_chapters or self.config.story.default_chapters
+        if force:
+            story.outlines = self.planner.generate_outline(story.premise, target_count)
+        else:
+            self._append_missing_outlines(story, target_count)
         story.status = WorkflowState.OUTLINE_GENERATED.value
         story.touch()
         self.save_state()
@@ -533,6 +539,39 @@ class NovelForgeEngine:
         )
         return run
 
+    def run_director_agent(self, user_message: str, max_steps: int = 6) -> AgentTraceRun:
+        story = self._require_story()
+        registry = ToolRegistry(self)
+        run = self.director.run(
+            story_id=str(story.id),
+            user_message=user_message,
+            max_steps=max_steps,
+            story=story,
+            tool_registry=registry,
+        )
+        story.agent_trace_runs.append(run)
+        story.touch()
+        self.save_state()
+        self.bus.emit(
+            "director_run_finished",
+            {
+                "story_id": str(story.id),
+                "run_id": run.id,
+                "status": run.status,
+                "steps": len(run.steps),
+            },
+        )
+        return run
+
+    def list_director_runs(self) -> list[AgentTraceRun]:
+        return list(self._require_story().agent_trace_runs)
+
+    def get_director_run(self, run_id: str) -> AgentTraceRun | None:
+        for run in self._require_story().agent_trace_runs:
+            if run.id == run_id:
+                return run
+        return None
+
     def _execute_agent_task(self, task, end_chapter: int) -> str:
         story = self._require_story()
         if task.action == "ensure_outline":
@@ -635,12 +674,23 @@ class NovelForgeEngine:
 
     def _ensure_outlines(self, end_chapter: int) -> None:
         story = self._require_story()
-        if len(story.outlines) >= end_chapter:
-            return
-        story.outlines = self.planner.generate_outline(story.premise, end_chapter)
+        self._append_missing_outlines(story, end_chapter)
         story.status = WorkflowState.OUTLINE_GENERATED.value
         story.touch()
         self.save_state()
+
+    def _append_missing_outlines(self, story: Story, target_count: int) -> None:
+        existing_count = len(story.outlines)
+        if existing_count >= target_count:
+            return
+        missing_count = target_count - existing_count
+        generated = self.planner.generate_outline(story.premise, missing_count)
+        for offset, outline in enumerate(generated[:missing_count], start=1):
+            real_index = existing_count + offset
+            story.outlines.append(self._renumber_outline(outline, real_index))
+
+    def _renumber_outline(self, outline: ChapterOutline, chapter_index: int) -> ChapterOutline:
+        return outline.model_copy(update={"chapter_index": chapter_index})
 
     def save_state(self) -> Path:
         story = self._require_story()

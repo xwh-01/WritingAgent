@@ -216,6 +216,38 @@ class AutonomousRunReport(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class AgentDecision(BaseModel):
+    step: int
+    intent: str = ""
+    selected_tool: str
+    reasoning_summary: str = ""
+    tool_args: dict[str, Any] = Field(default_factory=dict)
+    should_continue: bool = False
+    user_message: str = ""
+
+
+class AgentTraceStep(BaseModel):
+    step: int
+    selected_tool: str
+    reasoning_summary: str = ""
+    tool_args: dict[str, Any] = Field(default_factory=dict)
+    observation: str = ""
+    success: bool = True
+    error: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class AgentTraceRun(BaseModel):
+    id: str
+    story_id: str
+    user_message: str
+    status: str = "running"
+    steps: list[AgentTraceStep] = Field(default_factory=list)
+    final_summary: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class Foreshadowing(BaseModel):
     id: str
     description: str
@@ -307,6 +339,7 @@ class Story(BaseModel):
     continuity_reports: dict[int, ContinuityAuditReport] = Field(default_factory=dict)
     batch_reports: list[BatchWriteReport] = Field(default_factory=list)
     agent_runs: list[AutonomousRunReport] = Field(default_factory=list)
+    agent_trace_runs: list[AgentTraceRun] = Field(default_factory=list)
     current_chapter: int = 0
     status: str = "planning"
     created_at: datetime = Field(default_factory=utc_now)

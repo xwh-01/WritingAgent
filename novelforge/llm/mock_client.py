@@ -12,6 +12,69 @@ from novelforge.llm.base import LLMClient
 class MockLLMClient(LLMClient):
     def chat_completion(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         prompt = "\n".join(message.get("content", "") for message in messages)
+        if "director_decision" in prompt:
+            step = self._extract_step(prompt)
+            if "伏笔" in prompt:
+                intent, tool, args, reason, cont = (
+                    "inspect_foreshadowing",
+                    "list_foreshadowings",
+                    {"status": "pending"},
+                    "The user asked to inspect unresolved foreshadowings.",
+                    False,
+                )
+            elif "检查" in prompt or "审查" in prompt:
+                intent, tool, args, reason, cont = (
+                    "review_chapter",
+                    "review_chapter",
+                    {"chapter_index": self._extract_chapter(prompt, 1)},
+                    "The user asked to inspect chapter quality.",
+                    False,
+                )
+            elif "改" in prompt or "修" in prompt:
+                intent, tool, args, reason, cont = (
+                    "revise_chapter",
+                    "revise_chapter",
+                    {"chapter_index": self._extract_chapter(prompt, 1)},
+                    "The user asked to revise a chapter.",
+                    False,
+                )
+            elif "继续" in prompt or "下一章" in prompt:
+                if step <= 1:
+                    intent, tool, args, reason, cont = (
+                        "prepare_next_chapter",
+                        "create_outline",
+                        {"num_chapters": 1},
+                        "Ensure outline coverage before writing.",
+                        True,
+                    )
+                else:
+                    intent, tool, args, reason, cont = (
+                        "write_next_chapter",
+                        "auto_write_chapter",
+                        {"chapter_index": 1},
+                        "Write the requested next chapter through the auto-writing loop.",
+                        False,
+                    )
+            else:
+                intent, tool, args, reason, cont = (
+                    "show_status",
+                    "show_status",
+                    {},
+                    "Show current story status for a broad request.",
+                    False,
+                )
+            return json.dumps(
+                {
+                    "step": step,
+                    "intent": intent,
+                    "selected_tool": tool,
+                    "reasoning_summary": reason,
+                    "tool_args": args,
+                    "should_continue": cont,
+                    "user_message": "",
+                },
+                ensure_ascii=False,
+            )
         if "supervisor_plan" in prompt:
             return json.dumps(
                 {
@@ -187,6 +250,14 @@ class MockLLMClient(LLMClient):
 
     def _extract_int(self, text: str, default: int) -> int:
         match = re.search(r"(\d+)\s*(?:章|chapters|ChapterOutline)", text, re.IGNORECASE)
+        return int(match.group(1)) if match else default
+
+    def _extract_step(self, text: str) -> int:
+        match = re.search(r'"step"\s*:\s*(\d+)', text)
+        return int(match.group(1)) if match else 1
+
+    def _extract_chapter(self, text: str, default: int) -> int:
+        match = re.search(r"(?:第)?\s*(\d+)\s*(?:章|chapter|ch)", text, re.IGNORECASE)
         return int(match.group(1)) if match else default
 
     def _last_user_text(self, messages: list[dict[str, str]]) -> str:

@@ -234,16 +234,23 @@ function renderJobEvents(job) {
 async function generateOutline() {
     if (!state.story) return;
     const count = Math.max(1, Number(prompt("章节数", "10") || "10"));
+    let force = false;
+    if ((state.story.outlines || []).length) {
+        force = confirm("已有大纲，是否覆盖重建？取消则只补齐缺失章节。");
+    }
     setStatus("Generating outline");
-    await postJson(`/stories/${state.story.id}/outline`, { num_chapters: count });
+    await postJson(`/stories/${state.story.id}/outline`, { num_chapters: count, force });
     await loadStory(state.story.id);
 }
 
 async function generateBeats() {
     if (!state.story) return;
+    const chapterIndex = state.activeChapter;
     setStatus("Generating beats");
-    await postJson(`/chapters/${state.activeChapter}/beats?story_id=${state.story.id}`, {});
+    await postJson(`/chapters/${chapterIndex}/beats?story_id=${state.story.id}`, {});
     await loadStory(state.story.id);
+    state.activeChapter = chapterIndex;
+    renderWorkspace();
 }
 
 async function writeChapter() {

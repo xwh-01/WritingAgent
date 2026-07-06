@@ -274,6 +274,25 @@ class NovelForgeShell(cmd2.Cmd):
         result = self.engine.auto_write_chapter(chapter_index)
         self._print_auto_report(result)
 
+    def do_agent(self, line: str) -> None:
+        """agent <natural language task> -- let the director choose and run tools."""
+        message = line.strip()
+        if not message:
+            print("Usage: /agent <自然语言任务>")
+            return
+        run = self.engine.run_director_agent(message)
+        print(f"Director run {run.id} [{run.status}]")
+        for step in run.steps:
+            status = "ok" if step.success else "failed"
+            print(f"  {step.step}. {step.selected_tool} [{status}]")
+            if step.reasoning_summary:
+                print(f"     why: {step.reasoning_summary}")
+            if step.tool_args:
+                print(f"     args: {step.tool_args}")
+            print(f"     obs: {step.observation or step.error}")
+        if run.final_summary:
+            print(f"Summary: {run.final_summary}")
+
     def do_batch_write(self, line: str) -> None:
         """batch-write <start> <end> [draft] -- generate many chapters in one run."""
         parts = shlex.split(line)
@@ -416,6 +435,7 @@ def main() -> int:
             "  /state <character_id_or_name>\n"
             "  /summary update|show\n"
             "  /dashboard\n"
+            "  /agent <natural language task>\n"
             "  /auto-write <n>\n"
             "  /batch-write <start> <end> [draft]\n"
             "  /auto-status\n"

@@ -7,6 +7,7 @@ from novelforge.api.schemas import (
     AgenticRunRequest,
     BatchWriteRequest,
     CreateStoryRequest,
+    DirectorRunRequest,
     OutlineRequest,
     OutlineResponse,
     StatusResponse,
@@ -48,7 +49,7 @@ def delete_story(story_id: str) -> dict:
 @router.post("/{story_id}/outline", response_model=OutlineResponse)
 def generate_outline(story_id: str, payload: OutlineRequest) -> OutlineResponse:
     engine = get_engine(story_id)
-    return OutlineResponse(outlines=engine.generate_outline(payload.num_chapters))
+    return OutlineResponse(outlines=engine.generate_outline(payload.num_chapters, force=payload.force))
 
 
 @router.post("/{story_id}/batch-write")
@@ -89,6 +90,27 @@ def agentic_writing_run(story_id: str, payload: AgenticRunRequest) -> dict:
         payload.end_chapter,
         payload.use_auto_revision,
     ).model_dump()
+
+
+@router.post("/{story_id}/agent/run")
+def run_director_agent(story_id: str, payload: DirectorRunRequest) -> dict:
+    engine = get_engine(story_id)
+    return engine.run_director_agent(payload.user_message, payload.max_steps).model_dump()
+
+
+@router.get("/{story_id}/agent/runs")
+def list_director_runs(story_id: str) -> dict:
+    engine = get_engine(story_id)
+    return {"runs": [run.model_dump() for run in engine.list_director_runs()]}
+
+
+@router.get("/{story_id}/agent/runs/{run_id}")
+def get_director_run(story_id: str, run_id: str) -> dict:
+    engine = get_engine(story_id)
+    run = engine.get_director_run(run_id)
+    if run is None:
+        return {"error": "run_not_found", "run_id": run_id}
+    return run.model_dump()
 
 
 @router.get("/{story_id}/status", response_model=StatusResponse)
