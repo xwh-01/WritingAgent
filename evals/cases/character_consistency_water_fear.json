@@ -1,0 +1,17 @@
+{
+  "id": "character_consistency_water_fear",
+  "name": "Character consistency: unexplained location transition",
+  "category": "character_consistency",
+  "description": "A character jumps locations in adjacent chapters without an explanatory transition.",
+  "story": {"title": "Location Coherence", "premise": "A goalkeeper must remain spatially coherent.", "genre": "sports"},
+  "characters": [{"id": "hero", "name": "hero", "personality": "cautious"}],
+  "outlines": [{"chapter_index": 2, "title": "Sudden shift", "summary": "hero appears elsewhere.", "conflict": "The transition needs cause.", "pov_character": "hero"}],
+  "character_states": {
+    "hero": [
+      {"character_id": "hero", "chapter": 1, "emotional_state": "calm", "location": "training room", "knowledge_gained": [], "relationship_changes": {}},
+      {"character_id": "hero", "chapter": 2, "emotional_state": "calm", "location": "riverside field", "knowledge_gained": [], "relationship_changes": {}}
+    ]
+  },
+  "chapter_under_review": {"chapter_index": 2, "content": "hero is suddenly at the riverside field."},
+  "expected": {"issue_type": "character_state_issues", "keywords": []}
+}

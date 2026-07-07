@@ -12,7 +12,14 @@ def build_llm_client(config: LLMConfig) -> LLMClient:
     if provider == "deepseek":
         from novelforge.llm.deepseek_client import DeepSeekClient
 
-        return DeepSeekClient(api_key=config.api_key, model=config.model, base_url=config.base_url)
+        return DeepSeekClient(
+            api_key=config.api_key,
+            model=config.model,
+            base_url=config.base_url,
+            timeout=config.timeout,
+            max_retries=config.max_retries,
+            retry_backoff_seconds=config.retry_backoff_seconds,
+        )
     if provider in {"mock", "local", "fake"}:
         return MockLLMClient()
     raise ValueError(f"Unsupported LLM provider: {config.provider}")

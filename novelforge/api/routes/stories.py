@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, PlainTextResponse
+
 from novelforge.api.schemas import (
     AgenticRunRequest,
     BatchWriteRequest,
@@ -15,6 +17,7 @@ from novelforge.api.schemas import (
 )
 from novelforge.api.state import AUTO_REVISION_JOBS, ENGINES, get_engine
 from novelforge.orchestrator.engine import NovelForgeEngine
+from novelforge.orchestrator.trace_exporter import render_debug_report, trace_to_json
 
 router = APIRouter(prefix="/stories", tags=["stories"])
 
@@ -109,8 +112,26 @@ def get_director_run(story_id: str, run_id: str) -> dict:
     engine = get_engine(story_id)
     run = engine.get_director_run(run_id)
     if run is None:
-        return {"error": "run_not_found", "run_id": run_id}
+        raise HTTPException(status_code=404, detail=f"Director trace run not found: {run_id}")
     return run.model_dump()
+
+
+@router.get("/{story_id}/agent/runs/{run_id}/trace.json")
+def get_director_trace_json(story_id: str, run_id: str) -> dict:
+    engine = get_engine(story_id)
+    run = engine.get_director_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Director trace run not found: {run_id}")
+    return trace_to_json(run)
+
+
+@router.get("/{story_id}/agent/runs/{run_id}/debug.md", response_class=PlainTextResponse)
+def get_director_debug_markdown(story_id: str, run_id: str) -> str:
+    engine = get_engine(story_id)
+    run = engine.get_director_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Director trace run not found: {run_id}")
+    return render_debug_report(run)
 
 
 @router.get("/{story_id}/status", response_model=StatusResponse)
@@ -123,4 +144,19 @@ def get_status(story_id: str) -> StatusResponse:
         status=story.status,
         current_chapter=story.current_chapter,
         extra={"chapters": len(story.chapters), "outlines": len(story.outlines)},
+    )
+
+
+@router.get("/{story_id}/export-docx")
+def export_docx(story_id: str):
+    from urllib.parse import quote
+
+    engine = get_engine(story_id)
+    path = engine.export_docx()
+    filename = quote(path.name)
+    return FileResponse(
+        path,
+        filename=path.name,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )

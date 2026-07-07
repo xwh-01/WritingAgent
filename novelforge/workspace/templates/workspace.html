@@ -19,6 +19,11 @@
             </div>
 
             <div class="sidebar-content">
+                <div class="sidebar-card">
+                    <div class="card-kicker">Story Setup</div>
+                    <div class="card-title">创建或选择故事</div>
+                </div>
+
                 <form class="new-story" id="newStoryForm">
                     <input id="newTitle" name="title" placeholder="标题" autocomplete="off">
                     <textarea id="newPremise" name="premise" placeholder="故事前提"></textarea>
@@ -28,7 +33,7 @@
                     </div>
                 </form>
 
-                <div class="section-title">故事</div>
+                <div class="section-title">故事库</div>
                 <div class="story-list" id="storyList"></div>
 
                 <div class="section-title">章节</div>
@@ -39,18 +44,48 @@
         <main class="editor-pane">
             <header class="editor-header">
                 <div>
+                    <div class="workspace-label">Novel Agent Studio</div>
                     <div class="story-title" id="storyTitle">未选择故事</div>
                     <div class="story-premise" id="storyPremise"></div>
                 </div>
                 <div class="toolbar">
                     <button id="outlineBtn"><i data-lucide="list-tree"></i><span>大纲</span></button>
                     <button id="writeBtn"><i data-lucide="pen-line"></i><span>写作</span></button>
-                    <button id="agentRunBtn"><i data-lucide="workflow"></i><span>Agent</span></button>
-                    <button id="batchBtn"><i data-lucide="files"></i><span>批量</span></button>
                     <button id="saveBtn"><i data-lucide="save"></i><span>保存</span></button>
+                    <button id="exportDocxBtn"><i data-lucide="file-down"></i><span>导出</span></button>
                     <button id="dashboardBtn"><i data-lucide="bar-chart-3"></i><span>仪表盘</span></button>
                 </div>
             </header>
+
+            <section class="workflow-strip">
+                <div class="workflow-step" data-workflow-step="setup">
+                    <span>01</span>
+                    <strong>故事设定</strong>
+                </div>
+                <div class="workflow-step" data-workflow-step="outline">
+                    <span>02</span>
+                    <strong>章节大纲</strong>
+                </div>
+                <div class="workflow-step active" data-workflow-step="draft">
+                    <span>03</span>
+                    <strong>正文写作</strong>
+                </div>
+                <div class="workflow-step" data-workflow-step="agent">
+                    <span>04</span>
+                    <strong>Agent Trace</strong>
+                </div>
+            </section>
+
+            <section class="next-action-card" id="nextActionCard">
+                <div>
+                    <div class="next-kicker">下一步</div>
+                    <div class="next-title">先新建或选择一个故事</div>
+                    <div class="next-meta">前置条件会在这里显示。</div>
+                </div>
+                <button type="button" id="nextActionBtn" data-guide-action="focus-premise">
+                    <i data-lucide="arrow-right"></i><span>开始</span>
+                </button>
+            </section>
 
             <section class="outline-strip" id="outlineStrip"></section>
 
@@ -63,17 +98,29 @@
         <aside class="agent-pane">
             <div class="agent-header">
                 <div>
-                    <div class="section-title compact">Agent</div>
+                    <div class="section-title compact">Director Agent</div>
                     <div class="project-meta" id="activeChapterMeta">Chapter -</div>
                 </div>
                 <button class="icon-button" id="reloadStoryBtn" title="重新加载"><i data-lucide="rotate-cw"></i></button>
             </div>
 
-            <div class="action-grid">
-                <button id="beatsBtn"><i data-lucide="git-branch"></i><span>细纲</span></button>
-                <button id="reviewBtn"><i data-lucide="search-check"></i><span>审查</span></button>
-                <button id="autoBtn"><i data-lucide="bot"></i><span>自修</span></button>
-                <button id="reportBtn"><i data-lucide="file-text"></i><span>报告</span></button>
+            <div class="director-box">
+                <div class="director-guide" id="directorHints">
+                    <div class="guide-kicker">演示流程</div>
+                    <div class="guide-title">先新建或选择一个故事</div>
+                    <div class="guide-meta">准备好故事后，Director Agent 会按当前状态选择下一步工具。</div>
+                </div>
+                <textarea id="directorInput" placeholder="告诉 Agent 你想做什么，例如：继续写下一章 / 检查第5章人物有没有崩 / 查看未回收伏笔"></textarea>
+                <div class="prompt-grid" aria-label="Agent 示例任务">
+                    <button type="button" class="prompt-chip" data-director-prompt="继续写下一章"><i data-lucide="pen-line"></i><span>继续写下一章</span></button>
+                    <button type="button" class="prompt-chip" data-director-prompt="检查第5章人物有没有崩"><i data-lucide="search-check"></i><span>检查第5章人设</span></button>
+                    <button type="button" class="prompt-chip" data-director-prompt="查看未回收伏笔"><i data-lucide="git-branch"></i><span>查看未回收伏笔</span></button>
+                    <button type="button" class="prompt-chip" data-director-prompt="把第3章改得更阴冷克制"><i data-lucide="sliders-horizontal"></i><span>改写第3章风格</span></button>
+                </div>
+                <div class="director-actions">
+                    <button id="directorRunBtn"><i data-lucide="sparkles"></i><span>运行 Agent</span></button>
+                    <button id="agentRunBtn" type="button"><i data-lucide="workflow"></i><span>智能运行</span></button>
+                </div>
             </div>
 
             <div class="status-line" id="jobStatus">Idle</div>
@@ -85,19 +132,33 @@
                 </section>
 
                 <section class="agent-section">
-                    <h2>质量报告</h2>
-                    <div id="qualityReport" class="report-block"></div>
+                    <h2>上下文预览</h2>
+                    <div id="contextPreview" class="context-preview"></div>
+                </section>
+
+                <section class="agent-section compact-tools">
+                    <h2>辅助工具</h2>
+                    <div class="action-grid">
+                        <button id="beatsBtn"><i data-lucide="git-branch"></i><span>细纲</span></button>
+                        <button id="reviewBtn"><i data-lucide="search-check"></i><span>审查</span></button>
+                        <button id="autoBtn"><i data-lucide="bot"></i><span>自修</span></button>
+                        <button id="reportBtn"><i data-lucide="file-text"></i><span>报告</span></button>
+                        <button id="batchBtn"><i data-lucide="files"></i><span>批量写作</span></button>
+                        <button id="agenticRunBtn" type="button"><i data-lucide="workflow"></i><span>批量编排</span></button>
+                    </div>
                 </section>
 
                 <section class="agent-section">
-                    <h2>长篇状态</h2>
+                    <h2>项目状态</h2>
                     <div class="metric-grid" id="longformMetrics"></div>
                 </section>
 
                 <section class="agent-section">
-                    <h2>事件</h2>
-                    <div class="event-log" id="eventLog"></div>
+                    <h2>本次结果</h2>
+                    <div id="qualityReport" class="report-block"></div>
                 </section>
+
+                <div class="event-log" id="eventLog"></div>
             </div>
         </aside>
     </div>

@@ -1,12 +1,46 @@
 # NovelForge Evaluation Report
 
-- Cases: `4`
-- Passed: `4`
+- Cases: `36`
+- Passed: `36`
 - Hit Rate: `100.0%`
+- Baselines: `full`, `without_longform_context`, `without_auto_revision`
+- Baseline note: non-full modes are deterministic regression slices, not disabled production modules.
 
-| Case | Category | Result | Expected Keywords | Findings |
-| --- | --- | --- | --- | --- |
-| `causality_conflict` Causality conflict: future cause | causality | **PASS** | 未来章节, 前因 | 事件 ev-early-victory 的前因 ev-final-secret 发生在未来章节。 |
-| `character_contradiction` Character contradiction: fear of water | character_state | **PASS** | 怕水, 湖, 过渡 | hero 情绪从 恐惧 到 兴奋，需要过渡或原因。<br>hero 曾被记录为怕水，但本章进入湖相关场景，缺少克服恐惧的过渡。 |
-| `foreshadowing_overdue` Foreshadowing overdue | foreshadowing | **PASS** | 伏笔, 第5章, pending | 伏笔 fs-token 计划在第5章回收，但仍为 pending：后羿图案的旧护腕将在第5章决赛揭示真正用途。 |
-| `pacing_flat` Pacing flat trend | pacing | **PASS** | 冲突强度偏低, 预警 | 预警：最近三章冲突强度偏低，建议插入明确转折、失败代价或对抗场景。 |
+| Case | Category | Baseline | Result | Matched | Missing | False Positives | Issues | Summary |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `causal_ordering_future_secret` Causal ordering: future secret used early | causal_ordering | full | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under full. |
+| `causal_ordering_future_secret` Causal ordering: future secret used early | causal_ordering | without_longform_context | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `causal_ordering_future_secret` Causal ordering: future secret used early | causal_ordering | without_auto_revision | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `causal_ordering_missing_cause` Causal ordering: missing cause | causal_ordering | full | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under full. |
+| `causal_ordering_missing_cause` Causal ordering: missing cause | causal_ordering | without_longform_context | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `causal_ordering_missing_cause` Causal ordering: missing cause | causal_ordering | without_auto_revision | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `causality_conflict` Causality conflict: future cause | causal_ordering | full | **PASS** | 未来章节, 前因 | - | 0 | 1 | 1 issue(s), matched 2/2 keywords under full. |
+| `causality_conflict` Causality conflict: future cause | causal_ordering | without_longform_context | **PASS** | 未来章节, 前因 | - | 0 | 1 | 1 issue(s), matched 2/2 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `causality_conflict` Causality conflict: future cause | causal_ordering | without_auto_revision | **PASS** | 未来章节, 前因 | - | 0 | 1 | 1 issue(s), matched 2/2 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `character_consistency_emotion_flip` Character consistency: another unexplained location transition | character_consistency | full | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under full. |
+| `character_consistency_emotion_flip` Character consistency: another unexplained location transition | character_consistency | without_longform_context | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `character_consistency_emotion_flip` Character consistency: another unexplained location transition | character_consistency | without_auto_revision | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `character_consistency_water_fear` Character consistency: unexplained location transition | character_consistency | full | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under full. |
+| `character_consistency_water_fear` Character consistency: unexplained location transition | character_consistency | without_longform_context | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `character_consistency_water_fear` Character consistency: unexplained location transition | character_consistency | without_auto_revision | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `character_contradiction` Character contradiction: fear of water | character_consistency | full | **PASS** | 怕水, 湖, 过渡 | - | 0 | 2 | 2 issue(s), matched 3/3 keywords under full. |
+| `character_contradiction` Character contradiction: fear of water | character_consistency | without_longform_context | **PASS** | 怕水, 湖, 过渡 | - | 0 | 2 | 2 issue(s), matched 3/3 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `character_contradiction` Character contradiction: fear of water | character_consistency | without_auto_revision | **PASS** | 怕水, 湖, 过渡 | - | 0 | 2 | 2 issue(s), matched 3/3 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `foreshadowing_lifecycle_overdue_key` Foreshadowing lifecycle: overdue key | foreshadowing_lifecycle | full | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under full. |
+| `foreshadowing_lifecycle_overdue_key` Foreshadowing lifecycle: overdue key | foreshadowing_lifecycle | without_longform_context | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `foreshadowing_lifecycle_overdue_key` Foreshadowing lifecycle: overdue key | foreshadowing_lifecycle | without_auto_revision | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `foreshadowing_lifecycle_overdue_token` Foreshadowing lifecycle: overdue token | foreshadowing_lifecycle | full | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under full. |
+| `foreshadowing_lifecycle_overdue_token` Foreshadowing lifecycle: overdue token | foreshadowing_lifecycle | without_longform_context | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `foreshadowing_lifecycle_overdue_token` Foreshadowing lifecycle: overdue token | foreshadowing_lifecycle | without_auto_revision | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `foreshadowing_overdue` Foreshadowing overdue | foreshadowing_lifecycle | full | **PASS** | 伏笔, 第5章, pending | - | 0 | 1 | 1 issue(s), matched 3/3 keywords under full. |
+| `foreshadowing_overdue` Foreshadowing overdue | foreshadowing_lifecycle | without_longform_context | **PASS** | 伏笔, 第5章, pending | - | 0 | 1 | 1 issue(s), matched 3/3 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `foreshadowing_overdue` Foreshadowing overdue | foreshadowing_lifecycle | without_auto_revision | **PASS** | 伏笔, 第5章, pending | - | 0 | 1 | 1 issue(s), matched 3/3 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `pacing_flat` Pacing flat trend | pacing_trend | full | **PASS** | 冲突强度偏低, 预警 | - | 0 | 1 | 1 issue(s), matched 2/2 keywords under full. |
+| `pacing_flat` Pacing flat trend | pacing_trend | without_longform_context | **PASS** | 冲突强度偏低, 预警 | - | 0 | 1 | 1 issue(s), matched 2/2 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `pacing_flat` Pacing flat trend | pacing_trend | without_auto_revision | **PASS** | 冲突强度偏低, 预警 | - | 0 | 1 | 1 issue(s), matched 2/2 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `pacing_trend_flat_dialogue` Pacing trend: flat low-conflict chapters | pacing_trend | full | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under full. |
+| `pacing_trend_flat_dialogue` Pacing trend: flat low-conflict chapters | pacing_trend | without_longform_context | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `pacing_trend_flat_dialogue` Pacing trend: flat low-conflict chapters | pacing_trend | without_auto_revision | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |
+| `state_transition_location_jump` State transition: unexplained location jump | state_transition | full | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under full. |
+| `state_transition_location_jump` State transition: unexplained location jump | state_transition | without_longform_context | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_longform_context (simulated: deterministic checkers remain active; this labels regression slices). |
+| `state_transition_location_jump` State transition: unexplained location jump | state_transition | without_auto_revision | **PASS** | - | - | 0 | 1 | 1 issue(s), matched 0/0 keywords under without_auto_revision (simulated: deterministic checkers remain active; this labels regression slices). |

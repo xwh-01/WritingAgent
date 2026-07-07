@@ -1,0 +1,17 @@
+{
+  "id": "state_transition_location_jump",
+  "name": "State transition: unexplained location jump",
+  "category": "state_transition",
+  "description": "Adjacent character states jump locations without new knowledge.",
+  "story": {"title": "Location Jump", "premise": "State changes need transition.", "genre": "sports"},
+  "characters": [{"id": "hero", "name": "hero", "personality": "focused"}],
+  "outlines": [{"chapter_index": 2, "title": "Elsewhere", "summary": "hero appears elsewhere.", "conflict": "Transition must be explained.", "pov_character": "hero"}],
+  "character_states": {
+    "hero": [
+      {"character_id": "hero", "chapter": 1, "emotional_state": "calm", "location": "locker room", "knowledge_gained": [], "relationship_changes": {}},
+      {"character_id": "hero", "chapter": 2, "emotional_state": "calm", "location": "stadium roof", "knowledge_gained": [], "relationship_changes": {}}
+    ]
+  },
+  "chapter_under_review": {"chapter_index": 2, "content": "hero is suddenly on the stadium roof."},
+  "expected": {"issue_type": "character_state_issues", "keywords": []}
+}

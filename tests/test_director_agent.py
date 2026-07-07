@@ -62,6 +62,8 @@ def test_director_agent_api_and_trace_page() -> None:
 
     detail = client.get(f"/stories/{story_id}/agent/runs/{payload['id']}").json()
     assert detail["id"] == payload["id"]
+    missing = client.get(f"/stories/{story_id}/agent/runs/missing-trace")
+    assert missing.status_code == 404
 
     page = client.get("/agent-trace/", params={"story_id": story_id})
     assert page.status_code == 200
@@ -71,7 +73,15 @@ def test_director_agent_api_and_trace_page() -> None:
 def test_agents_endpoint_lists_new_agents() -> None:
     client = TestClient(app)
     agents = client.get("/agents/").json()["agents"]
-    assert "supervisor" in agents
-    assert "director" in agents
-    assert "continuity_auditor" in agents
-    assert "memory_extractor" in agents
+    assert agents == [
+        "planner",
+        "writer",
+        "critic",
+        "editor",
+        "supervisor",
+        "director",
+        "continuity_auditor",
+        "memory_extractor",
+        "context",
+        "memory",
+    ]

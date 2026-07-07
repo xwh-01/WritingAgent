@@ -283,15 +283,13 @@ class NovelForgeShell(cmd2.Cmd):
         run = self.engine.run_director_agent(message)
         print(f"Director run {run.id} [{run.status}]")
         for step in run.steps:
-            status = "ok" if step.success else "failed"
-            print(f"  {step.step}. {step.selected_tool} [{status}]")
-            if step.reasoning_summary:
-                print(f"     why: {step.reasoning_summary}")
+            print(f"Step {step.step}: {step.selected_tool}")
+            print(f"Reason: {step.reasoning_summary}")
             if step.tool_args:
-                print(f"     args: {step.tool_args}")
-            print(f"     obs: {step.observation or step.error}")
+                print(f"Args: {step.tool_args}")
+            print(f"Observation: {step.observation or step.error}")
         if run.final_summary:
-            print(f"Summary: {run.final_summary}")
+            print(f"Final Summary: {run.final_summary}")
 
     def do_batch_write(self, line: str) -> None:
         """batch-write <start> <end> [draft] -- generate many chapters in one run."""

@@ -16,6 +16,18 @@ def test_workspace_page_and_static_assets_render() -> None:
     assert page.status_code == 200
     assert "NovelForge 工作台" in page.text
     assert "批量" in page.text
+    assert "告诉 Agent 你想做什么" in page.text
+    assert "运行 Agent" in page.text
+    assert "演示流程" in page.text
+    assert "下一步" in page.text
+    assert "前置条件" in page.text
+    assert "继续写下一章" in page.text
+    assert "检查第5章人设" in page.text
+    assert "Novel Agent Studio" in page.text
+    assert "Director Agent" in page.text
+    assert "上下文预览" in page.text
+    assert "辅助工具" in page.text
+    assert "批量编排" in page.text
     assert trace.status_code == 200
     assert "Agent Trace" in trace.text
     assert script.status_code == 200

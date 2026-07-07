@@ -6,7 +6,8 @@ from fastapi.testclient import TestClient
 
 from novelforge.api.main import app
 from novelforge.api.state import ENGINES
-from novelforge.core.models import Character, Chapter, Story
+from novelforge.context.assembler import ContextAssembler
+from novelforge.core.models import Character, Chapter, ChapterOutline, Story
 from novelforge.memory.graph_store import NetworkXGraphStore
 from novelforge.memory.text_store import SQLiteFTSStore
 from novelforge.memory.vector_store import InMemoryVectorStore
@@ -46,6 +47,49 @@ def test_memory_backends_delete_story(tmp_path) -> None:
     assert "story-b:card:1" in remaining_ids
     assert fts.search("cleanup") == []
     assert graph.get_ego_network(f"{story_id}:character:hero")["nodes"] == {}
+
+
+def test_context_retrieval_is_scoped_to_story(tmp_path) -> None:
+    story = Story(title="Scoped", premise="own premise")
+    story.characters["hero"] = Character(id="hero", name="Hero")
+    story.outlines.append(
+        ChapterOutline(
+            chapter_index=1,
+            title="Shared clue",
+            summary="shared memory clue",
+            conflict="resolve shared conflict",
+            pov_character="hero",
+        )
+    )
+    own_id = str(story.id)
+    other_id = "other-story"
+
+    vector = InMemoryVectorStore()
+    vector.add("memory_cards", ["own vector shared memory clue"], [{"story_id": own_id}], [f"{own_id}:card:1"])
+    vector.add("memory_cards", ["other vector shared memory clue"], [{"story_id": other_id}], [f"{other_id}:card:1"])
+
+    fts = SQLiteFTSStore(str(tmp_path / "fts.sqlite3"))
+    fts.index_document(
+        f"{own_id}:chapter:1:v1",
+        "Shared clue shared memory clue resolve shared conflict hero own fulltext marker",
+    )
+    fts.index_document(
+        f"{other_id}:chapter:1:v1",
+        "Shared clue shared memory clue resolve shared conflict hero other fulltext marker",
+    )
+
+    graph = NetworkXGraphStore(str(tmp_path / "graph"))
+    graph.add_node(f"{own_id}:character:hero", {"story_id": own_id, "name": "Own Hero"})
+    graph.add_node(f"{other_id}:character:hero", {"story_id": other_id, "name": "Other Hero"})
+
+    context = ContextAssembler(vector, graph, fts).assemble_writing_context(1, story)
+
+    assert "own vector shared memory clue" in context
+    assert "own fulltext marker" in context
+    assert "Own Hero" in context
+    assert "other vector shared memory clue" not in context
+    assert "other fulltext marker" not in context
+    assert "Other Hero" not in context
 
 
 def test_delete_story_api_removes_file_and_engine() -> None:

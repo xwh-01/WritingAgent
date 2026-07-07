@@ -1,0 +1,11 @@
+{
+  "id": "foreshadowing_lifecycle_overdue_token",
+  "name": "Foreshadowing lifecycle: overdue token",
+  "category": "foreshadowing_lifecycle",
+  "description": "A token clue is still pending after target chapter.",
+  "story": {"title": "Overdue Token", "premise": "A token should reveal a secret.", "genre": "sports"},
+  "outlines": [{"chapter_index": 9, "title": "Quiet ending", "summary": "The clue remains unused.", "conflict": "Promise is not resolved.", "pov_character": "hero"}],
+  "foreshadowings": [{"id": "fs-token-2", "description": "The token reveals the training secret in chapter 6.", "created_chapter": 2, "target_chapter": 6, "status": "pending", "notes": ""}],
+  "chapter_under_review": {"chapter_index": 9, "content": "The celebration ends quietly; the token remains in a drawer."},
+  "expected": {"issue_type": "foreshadowing_issues", "keywords": []}
+}

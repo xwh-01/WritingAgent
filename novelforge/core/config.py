@@ -18,6 +18,9 @@ class LLMConfig(BaseModel):
     max_tokens: int = 4096
     api_key: str = ""
     base_url: str = "https://api.deepseek.com"
+    timeout: float = 60.0
+    max_retries: int = 3
+    retry_backoff_seconds: float = 1.0
 
 
 class MemoryConfig(BaseModel):
@@ -89,6 +92,9 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
             "max_tokens": os.getenv("NOVELFORGE_LLM_MAX_TOKENS"),
             "api_key": os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY"),
             "base_url": os.getenv("NOVELFORGE_LLM_BASE_URL"),
+            "timeout": os.getenv("NOVELFORGE_LLM_TIMEOUT"),
+            "max_retries": os.getenv("NOVELFORGE_LLM_MAX_RETRIES"),
+            "retry_backoff_seconds": os.getenv("NOVELFORGE_LLM_RETRY_BACKOFF_SECONDS"),
         },
         "memory": {
             "persist_directory": os.getenv("NOVELFORGE_CHROMA_DIR"),

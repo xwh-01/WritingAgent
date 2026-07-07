@@ -1,5 +1,48 @@
 # NovelForge
 
+## Read This Repo First
+
+If you just want to understand the project quickly, start with `docs/PROJECT_MAP.md`.
+It explains the reading order, directory responsibilities, core workflow, and interview talking points.
+
+## Project Positioning
+
+NovelForge is a vertical Agentic Workflow / Agent Engineering project for long-form fiction writing. It focuses on one bounded domain: planning, drafting, reviewing, revising, and remembering a serialized novel.
+
+It is intentionally **not**:
+
+- a general-purpose multi-agent platform
+- an MCP tool ecosystem
+- a production-grade observability platform
+- a complete version-control system
+- a generic Agent Studio
+
+The engineering goal is to show a credible bounded-agent system: typed tools, recoverable Director decisions, long-form memory, review/revision loops, unified trace, and regression evals for a writing workflow.
+
+## Interview Golden Demo
+
+Use the mock LLM path for a deterministic demo:
+
+```bash
+uvicorn novelforge.api.main:app --reload
+```
+
+Golden path:
+
+1. Create a story: `POST /stories/`
+2. Generate outline: `POST /stories/{story_id}/outline`
+3. Generate chapter beats: `POST /chapters/1/beats?story_id={story_id}`
+4. Write chapter: `POST /chapters/1/write?story_id={story_id}`
+5. Run automatic review: `POST /chapters/1/review?story_id={story_id}`
+6. Run automatic repair loop: `POST /chapters/1/auto-write?story_id={story_id}`
+7. Update long-form memory: automatically happens after chapter write/revision, or through the Director `update_memory` tool
+8. Run Director Agent: `POST /stories/{story_id}/agent/run`
+9. View trace JSON: `GET /stories/{story_id}/agent/runs/{run_id}/trace.json`
+10. View debug report: `GET /stories/{story_id}/agent/runs/{run_id}/debug.md`
+11. Run evals: `python -m evals.run_eval`
+
+The debug report explains each stage/action/tool, observations, memory hits, review score changes, and structured errors.
+
 NovelForge 是一个面向长篇小说创作的半自动 Agent 引擎，支持多智能体协作、分层记忆、工作流编排、版本控制、CLI 和 REST API。
 
 当前版本提供一个可运行的 MVP：即使没有 DeepSeek API key，也能通过 `mock` LLM 完整走通“规划 -> 细纲 -> 写作 -> 审查 -> 修改”的核心流程。
@@ -98,6 +141,25 @@ GET /dashboard/
 GET /dashboard/data/{story_id}
 GET /dashboard/stories
 GET /workspace/
+```
+
+## Director Agent and Agent Trace
+
+NovelForge now exposes two different agent entry points:
+
+- `/agent <natural language task>` is the natural-language Director Agent in the CLI. It reads the current story state, asks the LLM to choose the next tool, executes that tool, records an `AgentTraceRun`, and prints each tool step.
+- `/agentic-run` is the existing batch/task orchestration flow. It is best for planned multi-chapter writing runs such as outlining, drafting, revising, auditing, and memory updates across a chapter range.
+- Agent Trace shows the Director Agent's step-by-step tool choices and execution results: `selected_tool`, `reasoning_summary`, `tool_args`, `observation`, `success/error`, and `final_summary`.
+
+Useful endpoints:
+
+```text
+POST /stories/{story_id}/agent/run
+GET /stories/{story_id}/agent/runs
+GET /stories/{story_id}/agent/runs/{run_id}
+GET /stories/{story_id}/agent/runs/{run_id}/trace.json
+GET /stories/{story_id}/agent/runs/{run_id}/debug.md
+GET /agent-trace/
 ```
 
 ## Web 创作工作台

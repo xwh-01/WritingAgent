@@ -16,6 +16,7 @@ class AutoRevisionJob:
     id: str
     story_id: str
     chapter_index: int
+    run_id: str = ""
     status: str = "queued"
     current_round: int = 0
     progress_current: int = 0
@@ -32,6 +33,7 @@ class AutoRevisionJob:
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "run_id": self.run_id or self.id,
             "story_id": self.story_id,
             "chapter_index": self.chapter_index,
             "status": self.status,
@@ -60,6 +62,7 @@ class AutoRevisionJobRegistry:
             id=f"job-{uuid4().hex[:10]}",
             story_id=story_id,
             chapter_index=chapter_index,
+            run_id=f"auto-revision:{story_id}:ch{chapter_index}",
             progress_total=1,
             message=f"Queued auto-revision for chapter {chapter_index}",
         )
@@ -83,6 +86,7 @@ class AutoRevisionJobRegistry:
             id=f"job-{uuid4().hex[:10]}",
             story_id=story_id,
             chapter_index=start_chapter,
+            run_id=f"batch:{story_id}:ch{start_chapter}-{end_chapter}",
             progress_total=max(0, end_chapter - start_chapter + 1),
             message=f"Queued batch writing for chapters {start_chapter}-{end_chapter}",
         )
@@ -111,6 +115,7 @@ class AutoRevisionJobRegistry:
             id=f"job-{uuid4().hex[:10]}",
             story_id=story_id,
             chapter_index=start_chapter,
+            run_id=f"agentic:{story_id}:ch{start_chapter}-{end_chapter}",
             progress_total=0,
             message=f"Queued agentic writing run for chapters {start_chapter}-{end_chapter}",
         )
@@ -322,7 +327,7 @@ class AutoRevisionJobRegistry:
                 "agent": agent,
                 "action": action,
                 "task_id": task_id,
-                "run_id": run_id,
+                "run_id": run_id or job.run_id or job.id,
                 "progress_current": job.progress_current,
                 "progress_total": job.progress_total,
             }

@@ -26,6 +26,7 @@ class ContextAssembler:
         self.max_context_tokens = max_context_tokens
         self.longform_manager = longform_manager
         self.ranker = MemoryRanker()
+        self.last_context_stats: dict[str, Any] = {}
 
     def assemble_writing_context(self, chapter_index: int, story: Story) -> str:
         outline = story.get_outline(chapter_index)
@@ -43,13 +44,15 @@ class ContextAssembler:
         if chapter and chapter.beats:
             sections.append((85, "本章节拍: " + json.dumps([b.model_dump() for b in chapter.beats], ensure_ascii=False)))
         if outline.pov_character:
-            graph = self.graph_store.get_ego_network(outline.pov_character, depth=1)
+            graph = self.graph_store.get_ego_network(self._story_character_node_id(story, outline.pov_character), depth=1)
             sections.append((70, "视角角色关系网: " + json.dumps(graph, ensure_ascii=False)))
 
         entities = self._query_entities(story, query)
         recalled: list[dict[str, Any]] = []
+        vector_hits_count = 0
         for collection in ("characters", "world", "plot_summaries", "memory_cards"):
-            for item in self.vector_store.query(collection, query, k=12):
+            for item in self.vector_store.query(collection, query, k=12, story_id=str(story.id)):
+                vector_hits_count += 1
                 metadata = dict(item.get("metadata") or {})
                 metadata.setdefault("collection", collection)
                 item = dict(item)
@@ -61,14 +64,27 @@ class ContextAssembler:
             collection = item.get("metadata", {}).get("collection", "memory")
             sections.append((50, f"相关记忆[{collection} score={ranked_item.score:.1f}]: {item['document']}"))
 
-        for result in self.text_store.search(query, limit=5):
+        text_hits = self.text_store.search(query, limit=5, story_id=str(story.id))
+        for result in text_hits:
             sections.append((40, f"全文检索片段: {result[:500]}"))
 
+        has_longform_context = False
         if self.longform_manager is not None:
             enhanced = self.longform_manager.get_enhanced_context(chapter_index, story, query=query)
             if enhanced:
+                has_longform_context = True
                 sections.append((88, enhanced))
 
+        self.last_context_stats = {
+            "story_id": str(story.id),
+            "chapter_index": chapter_index,
+            "query": query,
+            "vector_hits_count": vector_hits_count,
+            "ranked_hits_count": len(ranked),
+            "text_hits_count": len(text_hits),
+            "longform_context": has_longform_context,
+            "memory_hits_count": len(ranked) + len(text_hits) + (1 if has_longform_context else 0),
+        }
         sections.sort(key=lambda item: item[0], reverse=True)
         context = "\n\n".join(text for _, text in sections)
         return self._truncate(context)
@@ -83,3 +99,9 @@ class ContextAssembler:
             if character_id in query or (character.name and character.name in query):
                 entities.add(character_id)
         return entities
+
+    def _story_character_node_id(self, story: Story, character_id: str) -> str:
+        story_prefix = f"{story.id}:"
+        if character_id.startswith(story_prefix):
+            return character_id
+        return f"{story.id}:character:{character_id}"

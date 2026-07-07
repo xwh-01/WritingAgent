@@ -29,24 +29,38 @@ class SQLiteFTSStore(IFTSStore):
                     (doc_id, doc_id, content),
                 )
 
-    def search(self, query: str, limit: int = 10) -> list[str]:
+    def search(self, query: str, limit: int = 10, story_id: str | None = None) -> list[str]:
         if not query.strip():
             return []
+        prefix = f"{story_id}:%" if story_id is not None else None
         cursor = self.connection.cursor()
         if self._fts_enabled:
             try:
-                rows = cursor.execute(
-                    "SELECT content FROM documents_fts WHERE documents_fts MATCH ? LIMIT ?",
-                    (query, limit),
-                ).fetchall()
+                if prefix is None:
+                    rows = cursor.execute(
+                        "SELECT content FROM documents_fts WHERE documents_fts MATCH ? LIMIT ?",
+                        (query, limit),
+                    ).fetchall()
+                else:
+                    rows = cursor.execute(
+                        "SELECT content FROM documents_fts WHERE documents_fts MATCH ? "
+                        "AND doc_id LIKE ? LIMIT ?",
+                        (query, prefix, limit),
+                    ).fetchall()
                 return [row[0] for row in rows]
             except sqlite3.OperationalError:
                 pass
         like_query = f"%{query}%"
-        rows = cursor.execute(
-            "SELECT content FROM documents WHERE content LIKE ? LIMIT ?",
-            (like_query, limit),
-        ).fetchall()
+        if prefix is None:
+            rows = cursor.execute(
+                "SELECT content FROM documents WHERE content LIKE ? LIMIT ?",
+                (like_query, limit),
+            ).fetchall()
+        else:
+            rows = cursor.execute(
+                "SELECT content FROM documents WHERE content LIKE ? AND doc_id LIKE ? LIMIT ?",
+                (like_query, prefix, limit),
+            ).fetchall()
         return [row[0] for row in rows]
 
     def delete_story(self, story_id: str) -> int:

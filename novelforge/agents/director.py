@@ -7,6 +7,15 @@ from uuid import uuid4
 
 from novelforge.agents.base import BaseAgent
 from novelforge.core.models import AgentDecision, AgentTraceRun, AgentTraceStep, Story, utc_now
+from novelforge.orchestrator.trace import (
+    ERROR_PRECONDITION_MISSING,
+    ERROR_QUALITY_GATE_FAILED,
+    ERROR_TOOL_ARG_INVALID,
+    ERROR_TOOL_EXECUTION_FAILED,
+    AgentTraceEvent,
+    classify_exception,
+    is_recoverable,
+)
 
 
 class NovelDirectorAgent(BaseAgent):
@@ -21,41 +30,107 @@ class NovelDirectorAgent(BaseAgent):
         tool_registry,
     ) -> AgentTraceRun:
         run = AgentTraceRun(id=f"trace-{uuid4().hex[:10]}", story_id=story_id, user_message=user_message)
+        recovery_attempts = 0
+        forced_decision: AgentDecision | None = None
         for step in range(1, max(1, max_steps) + 1):
-            decision = self.decide(story, user_message, step, run, tool_registry.list_specs())
+            decision = forced_decision or self.decide(story, user_message, step, run, tool_registry.list_specs())
+            forced_decision = None
+            decision.step = step
             if decision.selected_tool == "ask_user":
                 run.status = "needs_user_input"
                 run.final_summary = decision.user_message or decision.reasoning_summary or "Director needs more user input."
                 run.updated_at = utc_now()
                 break
+            observation = ""
             try:
-                result = tool_registry.execute(decision.selected_tool, decision.tool_args)
+                result = tool_registry.execute(decision.selected_tool, decision.tool_args, run_id=run.id)
                 observation = str(result.get("observation") or result)
+                success = bool(result.get("success", True))
+                error_type = str(result.get("error_type") or "")
+                error_message = str(result.get("error_message") or "")
                 trace_step = AgentTraceStep(
                     step=step,
+                    run_id=run.id,
+                    story_id=story_id,
+                    chapter_index=self._chapter_from_args(decision.tool_args),
+                    stage="director_execute",
+                    action=decision.selected_tool,
                     selected_tool=decision.selected_tool,
                     reasoning_summary=decision.reasoning_summary,
                     tool_args=decision.tool_args,
+                    input_summary=decision.reflection or decision.reasoning_summary,
+                    output_summary=str(result.get("output_summary") or observation),
                     observation=observation,
-                    success=True,
+                    memory_hits_count=int((result.get("trace_event") or {}).get("memory_hits_count", 0) or 0),
+                    review_score_after=result.get("review_score_after"),
+                    success=success,
+                    error_type=error_type,
+                    error_message=error_message,
+                    duration_ms=int(result.get("duration_ms", 0) or 0),
+                    error=error_message,
                 )
+                trace_event = result.get("trace_event")
+                if isinstance(trace_event, dict):
+                    run.trace_events.append(AgentTraceEvent.model_validate(trace_event).model_dump())
             except Exception as exc:
+                error_type = classify_exception(exc)
                 trace_step = AgentTraceStep(
                     step=step,
+                    run_id=run.id,
+                    story_id=story_id,
+                    chapter_index=self._chapter_from_args(decision.tool_args),
+                    stage="director_execute",
+                    action=decision.selected_tool,
                     selected_tool=decision.selected_tool,
                     reasoning_summary=decision.reasoning_summary,
                     tool_args=decision.tool_args,
                     observation="",
                     success=False,
+                    error_type=error_type,
+                    error_message=str(exc),
                     error=str(exc),
                 )
-                run.status = "failed"
-                run.final_summary = f"Director stopped after tool failure: {exc}"
-                run.steps.append(trace_step)
-                run.updated_at = utc_now()
-                break
+                run.trace_events.append(
+                    AgentTraceEvent(
+                        run_id=run.id,
+                        story_id=story_id,
+                        chapter_index=self._chapter_from_args(decision.tool_args),
+                        stage="director_execute",
+                        action=decision.selected_tool,
+                        selected_tool=decision.selected_tool,
+                        tool_args=decision.tool_args,
+                        input_summary=decision.reasoning_summary,
+                        success=False,
+                        error_type=error_type,
+                        error_message=str(exc),
+                    ).model_dump()
+                )
+                error_message = str(exc)
+                success = False
             run.steps.append(trace_step)
             run.updated_at = utc_now()
+            if not success:
+                if is_recoverable(error_type) and recovery_attempts < 2:
+                    recovery_attempts += 1
+                    forced_decision = self._recovery_decision(story, decision, error_type, error_message, step + 1)
+                    run.trace_events.append(
+                        AgentTraceEvent(
+                            run_id=run.id,
+                            story_id=story_id,
+                            chapter_index=self._chapter_from_args(forced_decision.tool_args),
+                            stage="reflect_replan",
+                            action=forced_decision.selected_tool,
+                            selected_tool=forced_decision.selected_tool,
+                            tool_args=forced_decision.tool_args,
+                            input_summary=observation or error_message,
+                            observation=forced_decision.reflection,
+                            success=True,
+                        ).model_dump()
+                    )
+                    continue
+                run.status = "failed"
+                run.final_summary = f"Director stopped after unrecoverable tool failure: {error_type} {error_message}"
+                break
             if not decision.should_continue:
                 run.status = "completed"
                 run.final_summary = observation
@@ -70,6 +145,86 @@ class NovelDirectorAgent(BaseAgent):
             run.status = "completed"
         run.updated_at = utc_now()
         return run
+
+    def _chapter_from_args(self, args: dict) -> int | None:
+        value = args.get("chapter_index")
+        return value if isinstance(value, int) else None
+
+    def _recovery_decision(
+        self,
+        story: Story,
+        failed: AgentDecision,
+        error_type: str,
+        error_message: str,
+        step: int,
+    ) -> AgentDecision:
+        chapter = self._safe_chapter(failed.tool_args, story)
+        if error_type == ERROR_TOOL_ARG_INVALID:
+            fixed_args = dict(failed.tool_args)
+            fixed_args["chapter_index"] = chapter
+            return AgentDecision(
+                step=step,
+                intent="repair_tool_args",
+                selected_tool=failed.selected_tool,
+                reasoning_summary="Repair invalid tool arguments and retry once.",
+                tool_args=fixed_args,
+                should_continue=failed.should_continue,
+                fallback_action=failed.fallback_action,
+                reflection=f"Recovered from tool_arg_invalid: {error_message}",
+                retry_count=failed.retry_count + 1,
+            )
+        if error_type == ERROR_PRECONDITION_MISSING:
+            if len(story.outlines) < chapter:
+                return AgentDecision(
+                    step=step,
+                    intent="repair_missing_outline",
+                    selected_tool="create_outline",
+                    reasoning_summary="A required outline is missing, so create outline coverage first.",
+                    tool_args={"num_chapters": chapter},
+                    should_continue=True,
+                    fallback_action=failed.selected_tool,
+                    reflection=f"Recovered from missing precondition before {failed.selected_tool}: {error_message}",
+                )
+            chapter_state = story.chapters.get(chapter)
+            if chapter_state is None or not chapter_state.beats:
+                return AgentDecision(
+                    step=step,
+                    intent="repair_missing_beats",
+                    selected_tool="create_beats",
+                    reasoning_summary="Scene beats are missing, so create beats before retrying writing.",
+                    tool_args={"chapter_index": chapter},
+                    should_continue=True,
+                    fallback_action=failed.selected_tool,
+                    reflection=f"Recovered from missing beats before {failed.selected_tool}: {error_message}",
+                )
+        if error_type == ERROR_QUALITY_GATE_FAILED:
+            return AgentDecision(
+                step=step,
+                intent="repair_quality_gate",
+                selected_tool="auto_write_chapter",
+                reasoning_summary="Quality gate failed, so route the chapter through auto revision.",
+                tool_args={"chapter_index": chapter},
+                should_continue=False,
+                reflection=f"Recovered from quality gate failure: {error_message}",
+            )
+        return AgentDecision(
+            step=step,
+            intent="retry_tool",
+            selected_tool=failed.selected_tool,
+            reasoning_summary="Retry a recoverable tool execution failure once.",
+            tool_args={"chapter_index": chapter} if "chapter_index" in failed.tool_args else dict(failed.tool_args),
+            should_continue=failed.should_continue,
+            reflection=f"Retrying after {error_type}: {error_message}",
+            retry_count=failed.retry_count + 1,
+        )
+
+    def _safe_chapter(self, args: dict, story: Story) -> int:
+        value = args.get("chapter_index")
+        try:
+            chapter = int(value)
+        except Exception:
+            chapter = max(story.current_chapter, 1)
+        return max(1, chapter)
 
     def decide(
         self,

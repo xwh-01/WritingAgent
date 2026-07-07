@@ -22,10 +22,18 @@ class InMemoryVectorStore(IVectorStore):
             metadata.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
             self._collections[collection][doc_id] = (doc, metadata)
 
-    def query(self, collection: str, query_text: str, k: int = 5) -> list[dict[str, Any]]:
+    def query(
+        self,
+        collection: str,
+        query_text: str,
+        k: int = 5,
+        story_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         query_vec = self._tokenize(query_text)
         scored: list[dict[str, Any]] = []
         for doc_id, (document, metadata) in self._collections.get(collection, {}).items():
+            if story_id is not None and not self._belongs_to_story(doc_id, metadata, story_id):
+                continue
             score = self._cosine(query_vec, self._tokenize(document))
             scored.append({"id": doc_id, "document": document, "metadata": metadata, "score": score})
         return sorted(scored, key=lambda item: item["score"], reverse=True)[:k]
@@ -45,6 +53,9 @@ class InMemoryVectorStore(IVectorStore):
 
     def _tokenize(self, text: str) -> Counter[str]:
         return Counter(re.findall(r"[\w\u4e00-\u9fff]+", text.lower()))
+
+    def _belongs_to_story(self, doc_id: str, metadata: dict[str, Any], story_id: str) -> bool:
+        return str(metadata.get("story_id", "")) == story_id or doc_id.startswith(f"{story_id}:")
 
     def _cosine(self, a: Counter[str], b: Counter[str]) -> float:
         if not a or not b:
@@ -81,11 +92,20 @@ class ChromaVectorStore(IVectorStore):
         coll = self.client.get_or_create_collection(collection)
         coll.upsert(documents=documents, metadatas=enriched, ids=ids)
 
-    def query(self, collection: str, query_text: str, k: int = 5) -> list[dict[str, Any]]:
+    def query(
+        self,
+        collection: str,
+        query_text: str,
+        k: int = 5,
+        story_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         if self._fallback is not None:
-            return self._fallback.query(collection, query_text, k)
+            return self._fallback.query(collection, query_text, k, story_id=story_id)
         coll = self.client.get_or_create_collection(collection)
-        result = coll.query(query_texts=[query_text], n_results=k)
+        query_kwargs: dict[str, Any] = {"query_texts": [query_text], "n_results": k}
+        if story_id is not None:
+            query_kwargs["where"] = {"story_id": story_id}
+        result = coll.query(**query_kwargs)
         ids = result.get("ids", [[]])[0]
         docs = result.get("documents", [[]])[0]
         metas = result.get("metadatas", [[]])[0]

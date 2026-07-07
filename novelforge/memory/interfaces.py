@@ -12,7 +12,13 @@ class IVectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def query(self, collection: str, query_text: str, k: int = 5) -> list[dict[str, Any]]:
+    def query(
+        self,
+        collection: str,
+        query_text: str,
+        k: int = 5,
+        story_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -44,7 +50,7 @@ class IFTSStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def search(self, query: str, limit: int = 10) -> list[str]:
+    def search(self, query: str, limit: int = 10, story_id: str | None = None) -> list[str]:
         raise NotImplementedError
 
     @abstractmethod

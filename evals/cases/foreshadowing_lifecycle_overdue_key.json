@@ -1,0 +1,11 @@
+{
+  "id": "foreshadowing_lifecycle_overdue_key",
+  "name": "Foreshadowing lifecycle: overdue key",
+  "category": "foreshadowing_lifecycle",
+  "description": "A planned payoff target has passed but remains pending.",
+  "story": {"title": "Overdue Key", "premise": "A key must pay off.", "genre": "mystery"},
+  "outlines": [{"chapter_index": 7, "title": "After final", "summary": "The final passes without the key.", "conflict": "Open promise remains.", "pov_character": "hero"}],
+  "foreshadowings": [{"id": "fs-key", "description": "A key should pay off in chapter 5.", "created_chapter": 1, "target_chapter": 5, "status": "pending", "notes": ""}],
+  "chapter_under_review": {"chapter_index": 7, "content": "The team celebrates and nobody mentions the key."},
+  "expected": {"issue_type": "foreshadowing_issues", "keywords": []}
+}

@@ -1,0 +1,17 @@
+{
+  "id": "character_consistency_emotion_flip",
+  "name": "Character consistency: another unexplained location transition",
+  "category": "character_consistency",
+  "description": "A second spatial transition regression case for character state checks.",
+  "story": {"title": "Transition Check", "premise": "Character state continuity matters.", "genre": "sports"},
+  "characters": [{"id": "hero", "name": "hero", "personality": "reserved"}],
+  "outlines": [{"chapter_index": 4, "title": "New place", "summary": "hero appears in a new place.", "conflict": "Missing transition.", "pov_character": "hero"}],
+  "character_states": {
+    "hero": [
+      {"character_id": "hero", "chapter": 3, "emotional_state": "focused", "location": "locker room", "knowledge_gained": [], "relationship_changes": {}},
+      {"character_id": "hero", "chapter": 4, "emotional_state": "focused", "location": "north stand", "knowledge_gained": [], "relationship_changes": {}}
+    ]
+  },
+  "chapter_under_review": {"chapter_index": 4, "content": "hero is suddenly in the north stand."},
+  "expected": {"issue_type": "character_state_issues", "keywords": []}
+}

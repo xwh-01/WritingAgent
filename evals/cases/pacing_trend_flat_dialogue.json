@@ -1,0 +1,14 @@
+{
+  "id": "pacing_trend_flat_dialogue",
+  "name": "Pacing trend: flat low-conflict chapters",
+  "category": "pacing_trend",
+  "description": "Three low-conflict chapters should warn about pacing.",
+  "story": {"title": "Flat Dialogue", "premise": "The story slows down.", "genre": "sports"},
+  "pacing_history": [
+    {"chapter": 1, "content": "They sat. The room was quiet. Nothing changed."},
+    {"chapter": 2, "content": "He waited. She waited. The day passed."},
+    {"chapter": 3, "content": "The team talked softly and no conflict appeared."}
+  ],
+  "chapter_under_review": {"chapter_index": 3, "content": "The team talked softly and no conflict appeared."},
+  "expected": {"issue_type": "pacing_issues", "keywords": []}
+}

@@ -19,7 +19,7 @@ def list_agents() -> dict[str, list[str]]:
             "director",
             "continuity_auditor",
             "memory_extractor",
-            "memory",
             "context",
+            "memory",
         ]
     }

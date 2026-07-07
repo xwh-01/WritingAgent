@@ -5,7 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from pydantic import BaseModel, ValidationError
+
 from novelforge.core.exceptions import WorkflowError
+from novelforge.orchestrator.tool_schemas import TOOL_ARG_SCHEMAS
+from novelforge.orchestrator.trace import (
+    ERROR_TOOL_ARG_INVALID,
+    classify_exception,
+    trace_timer,
+)
 
 
 @dataclass(frozen=True)
@@ -13,6 +21,7 @@ class ToolSpec:
     name: str
     description: str
     args_schema: dict[str, str]
+    args_model: type[BaseModel]
     handler: Callable[[dict[str, Any]], dict[str, Any]]
 
 
@@ -28,6 +37,7 @@ class ToolRegistry:
                 "name": tool.name,
                 "description": tool.description,
                 "args_schema": tool.args_schema,
+                "json_schema": tool.args_model.model_json_schema(),
             }
             for tool in self._tools.values()
         ]
@@ -35,13 +45,87 @@ class ToolRegistry:
     def has_tool(self, name: str) -> bool:
         return name in self._tools
 
-    def execute(self, name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+    def execute(self, name: str, args: dict[str, Any] | None = None, run_id: str = "") -> dict[str, Any]:
+        args = args or {}
         if name not in self._tools:
-            raise WorkflowError(f"Unknown director tool: {name}")
-        return self._tools[name].handler(args or {})
+            return self._error_result(name, args, ERROR_TOOL_ARG_INVALID, f"Unknown director tool: {name}", run_id)
+        tool = self._tools[name]
+        try:
+            validated = tool.args_model.model_validate(args).model_dump(exclude_none=True)
+        except ValidationError as exc:
+            return self._error_result(name, args, ERROR_TOOL_ARG_INVALID, str(exc), run_id)
+        with trace_timer() as timer:
+            try:
+                result = tool.handler(validated)
+            except Exception as exc:
+                return self._error_result(name, validated, classify_exception(exc), str(exc), run_id, timer.duration_ms)
+        observation = str(result.get("observation") or result)
+        result.setdefault("success", True)
+        result.setdefault("error_type", "")
+        result.setdefault("error_message", "")
+        result.setdefault("selected_tool", name)
+        result.setdefault("tool_args", validated)
+        result.setdefault("duration_ms", timer.duration_ms)
+        result.setdefault("output_summary", observation)
+        result.setdefault("trace_event", self._trace_event(name, validated, result, run_id, timer.duration_ms))
+        return result
 
     def _register(self, name: str, description: str, args_schema: dict[str, str], handler: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
-        self._tools[name] = ToolSpec(name=name, description=description, args_schema=args_schema, handler=handler)
+        self._tools[name] = ToolSpec(
+            name=name,
+            description=description,
+            args_schema=args_schema,
+            args_model=TOOL_ARG_SCHEMAS[name],
+            handler=handler,
+        )
+
+    def _error_result(
+        self,
+        name: str,
+        args: dict[str, Any],
+        error_type: str,
+        error_message: str,
+        run_id: str,
+        duration_ms: int = 0,
+    ) -> dict[str, Any]:
+        result = {
+            "success": False,
+            "selected_tool": name,
+            "tool_args": args,
+            "observation": f"{error_type}: {error_message}",
+            "output_summary": "",
+            "error_type": error_type,
+            "error_message": error_message,
+            "duration_ms": duration_ms,
+        }
+        result["trace_event"] = self._trace_event(name, args, result, run_id, duration_ms)
+        return result
+
+    def _trace_event(self, name: str, args: dict[str, Any], result: dict[str, Any], run_id: str, duration_ms: int) -> dict[str, Any]:
+        try:
+            story_id = str(self._story().id)
+        except Exception:
+            story_id = ""
+        chapter_index = args.get("chapter_index")
+        context_stats = getattr(self.engine.context_assembler, "last_context_stats", {})
+        return {
+            "run_id": run_id,
+            "story_id": story_id,
+            "chapter_index": chapter_index if isinstance(chapter_index, int) else None,
+            "stage": "tool_call",
+            "action": name,
+            "selected_tool": name,
+            "tool_args": args,
+            "input_summary": f"Execute tool {name}",
+            "output_summary": str(result.get("output_summary") or result.get("observation") or ""),
+            "observation": str(result.get("observation") or ""),
+            "memory_hits_count": int(context_stats.get("memory_hits_count", 0) or 0),
+            "review_score_after": result.get("review_score_after"),
+            "success": bool(result.get("success", True)),
+            "error_type": str(result.get("error_type") or ""),
+            "error_message": str(result.get("error_message") or ""),
+            "duration_ms": duration_ms,
+        }
 
     def _register_defaults(self) -> None:
         self._register("show_status", "Show current story progress, outline count, chapter count, and memory counts.", {}, self._show_status)
@@ -110,7 +194,11 @@ class ToolRegistry:
     def _auto_write_chapter(self, args: dict[str, Any]) -> dict[str, Any]:
         chapter_index = self._chapter_index(args)
         report = self.engine.auto_write_chapter(chapter_index)
-        return {"observation": f"Auto-wrote chapter {chapter_index}: score={report.final_score:.2f}, passed={report.passed}.", "data": report.model_dump()}
+        return {
+            "observation": f"Auto-wrote chapter {chapter_index}: score={report.final_score:.2f}, passed={report.passed}.",
+            "data": report.model_dump(),
+            "review_score_after": report.final_score,
+        }
 
     def _audit_continuity(self, args: dict[str, Any]) -> dict[str, Any]:
         chapter_index = self._chapter_index(args)

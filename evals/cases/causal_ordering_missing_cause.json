@@ -1,0 +1,10 @@
+{
+  "id": "causal_ordering_missing_cause",
+  "name": "Causal ordering: missing cause",
+  "category": "causal_ordering",
+  "description": "An event references a missing cause id.",
+  "story": {"title": "Missing Cause", "premise": "Cause ids must exist.", "genre": "sports"},
+  "causal_events": [],
+  "new_event": {"id": "ev-result", "chapter": 3, "description": "A win depends on an unknown event.", "causes": ["ev-missing"], "effects": []},
+  "expected": {"issue_type": "causality_issues", "keywords": []}
+}

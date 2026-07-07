@@ -161,6 +161,7 @@ class AutoRevisionReport(BaseModel):
     passed: bool = False
     residual_issues: list[RevisionIssue] = Field(default_factory=list)
     stopped: bool = False
+    trace_events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class BatchChapterResult(BaseModel):
@@ -224,15 +225,32 @@ class AgentDecision(BaseModel):
     tool_args: dict[str, Any] = Field(default_factory=dict)
     should_continue: bool = False
     user_message: str = ""
+    success_criteria: list[str] = Field(default_factory=list)
+    fallback_action: str = ""
+    reflection: str = ""
+    retry_count: int = 0
 
 
 class AgentTraceStep(BaseModel):
     step: int
+    run_id: str = ""
+    story_id: str = ""
+    chapter_index: int | None = None
+    stage: str = "director_step"
+    action: str = ""
     selected_tool: str
     reasoning_summary: str = ""
     tool_args: dict[str, Any] = Field(default_factory=dict)
+    input_summary: str = ""
+    output_summary: str = ""
     observation: str = ""
+    memory_hits_count: int = 0
+    review_score_before: float | None = None
+    review_score_after: float | None = None
     success: bool = True
+    error_type: str = ""
+    error_message: str = ""
+    duration_ms: int = 0
     error: str = ""
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -243,6 +261,7 @@ class AgentTraceRun(BaseModel):
     user_message: str
     status: str = "running"
     steps: list[AgentTraceStep] = Field(default_factory=list)
+    trace_events: list[dict[str, Any]] = Field(default_factory=list)
     final_summary: str = ""
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

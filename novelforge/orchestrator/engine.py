@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Callable
@@ -40,6 +41,7 @@ from novelforge.memory.text_store import SQLiteFTSStore
 from novelforge.memory.vector_store import ChromaVectorStore
 from novelforge.orchestrator.auto_revisor import AutoRevisor, AutoRevisorConfig
 from novelforge.orchestrator.bus import EventBus
+from novelforge.orchestrator.trace_exporter import write_debug_report, write_trace_json
 from novelforge.orchestrator.tool_registry import ToolRegistry
 from novelforge.storage.repository import StoryRepository
 
@@ -170,8 +172,8 @@ class NovelForgeEngine:
         chapter = story.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
             raise WorkflowError(f"Chapter {chapter_index} has no draft to review.")
-        memories = self.vector_store.query("plot_summaries", outline.summary, k=5)
-        memories.extend(self.vector_store.query("memory_cards", outline.summary, k=5))
+        memories = self.vector_store.query("plot_summaries", outline.summary, k=5, story_id=str(story.id))
+        memories.extend(self.vector_store.query("memory_cards", outline.summary, k=5, story_id=str(story.id)))
         longform_context = self.longform_manager.get_enhanced_context(chapter_index, story, query=outline.summary)
         report = self.critic.review_chapter(
             chapter.content,
@@ -572,6 +574,20 @@ class NovelForgeEngine:
                 return run
         return None
 
+    def export_director_trace_json(self, run_id: str, output_path: str | Path | None = None) -> Path:
+        run = self.get_director_run(run_id)
+        if run is None:
+            raise WorkflowError(f"Director trace run not found: {run_id}")
+        output = Path(output_path or self.state_dir / f"{run.id}-trace.json")
+        return write_trace_json(run, output)
+
+    def export_director_debug_report(self, run_id: str, output_path: str | Path | None = None) -> Path:
+        run = self.get_director_run(run_id)
+        if run is None:
+            raise WorkflowError(f"Director trace run not found: {run_id}")
+        output = Path(output_path or self.state_dir / f"{run.id}-debug.md")
+        return write_debug_report(run, output)
+
     def _execute_agent_task(self, task, end_chapter: int) -> str:
         story = self._require_story()
         if task.action == "ensure_outline":
@@ -710,13 +726,64 @@ class NovelForgeEngine:
 
     def export_markdown(self, output_path: str | Path | None = None) -> Path:
         story = self._require_story()
-        output = Path(output_path or self.state_dir / f"{story.title}.md")
+        output = Path(output_path or self.state_dir / f"{self._safe_export_filename(story.title)}.md")
         lines = [f"# {story.title}", "", f"> {story.premise}", ""]
         for index in sorted(story.chapters):
             chapter = story.chapters[index]
             lines.extend([f"## {chapter.title}", "", chapter.content, ""])
         output.write_text("\n".join(lines), encoding="utf-8")
         return output
+
+    def export_docx(self, output_path: str | Path | None = None) -> Path:
+        from docx import Document
+        from docx.shared import Pt, Cm
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        story = self._require_story()
+        doc = Document()
+
+        style = doc.styles["Normal"]
+        font = style.font
+        font.name = "SimSun"
+        font.size = Pt(12)
+
+        title_para = doc.add_paragraph()
+        title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = title_para.add_run(story.title)
+        run.bold = True
+        run.font.size = Pt(22)
+
+        if story.premise:
+            premise_para = doc.add_paragraph()
+            premise_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = premise_para.add_run(story.premise)
+            run.italic = True
+            run.font.size = Pt(11)
+            run.font.color.rgb = None
+
+        doc.add_paragraph()
+
+        for idx in sorted(story.chapters):
+            chapter = story.chapters[idx]
+            if chapter.content:
+                heading = doc.add_heading(chapter.title, level=1)
+                for run in heading.runs:
+                    run.font.size = Pt(16)
+                for paragraph_text in chapter.content.split("\n"):
+                    para = doc.add_paragraph(paragraph_text)
+                    para.paragraph_format.first_line_indent = Cm(0.74)
+                    para.paragraph_format.line_spacing = 1.5
+
+        output = Path(
+            output_path
+            or (self.state_dir.parent / f"{self._safe_export_filename(story.title)}.docx")
+        )
+        doc.save(str(output))
+        return output
+
+    def _safe_export_filename(self, title: str, fallback: str = "untitled") -> str:
+        cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", title).strip(" ._")
+        return cleaned[:80] or fallback
 
     def export_auto_revision_report(self, chapter_index: int, output_path: str | Path | None = None) -> Path:
         story = self._require_story()
