@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from novelforge.core.models import Story
 from novelforge.longform.manager import LongformManager
 from novelforge.longform.ranker import MemoryRanker
 from novelforge.memory.interfaces import IFTSStore, IGraphStore, IVectorStore
 
+if TYPE_CHECKING:
+    from novelforge.core.config import MemoryRankerConfig
+
 
 class ContextAssembler:
+    """从故事状态和多个记忆后端聚合写作上下文，供 LLM 在生成章节时使用。"""
+
     def __init__(
         self,
         vector_store: IVectorStore,
@@ -19,16 +24,21 @@ class ContextAssembler:
         text_store: IFTSStore,
         max_context_tokens: int = 6000,
         longform_manager: LongformManager | None = None,
+        memory_ranker_config: "MemoryRankerConfig | None" = None,
     ) -> None:
+        """初始化三个记忆后端和上下文截断长度。"""
         self.vector_store = vector_store
         self.graph_store = graph_store
         self.text_store = text_store
         self.max_context_tokens = max_context_tokens
         self.longform_manager = longform_manager
-        self.ranker = MemoryRanker()
+        self.ranker = MemoryRanker(memory_ranker_config)
         self.last_context_stats: dict[str, Any] = {}
 
     def assemble_writing_context(self, chapter_index: int, story: Story) -> str:
+        """拼装指定章节的写作上下文：大纲、角色关系、向量记忆、全文检索和长文摘要。
+        返回按重要性排序并截断后的文本块。
+        """
         outline = story.get_outline(chapter_index)
         query = " ".join(
             part
@@ -90,10 +100,25 @@ class ContextAssembler:
         return self._truncate(context)
 
     def _truncate(self, text: str) -> str:
+        """按 max_context_tokens 估算的字符数截断文本。
+
+        在 token 边界不精确的约束下，尽量在段落/句子边界截断以避免
+        在 JSON 结构或词语中间切断。
+        """
         max_chars = self.max_context_tokens * 4
-        return text[:max_chars]
+        if len(text) <= max_chars:
+            return text
+        # Walk back to the nearest double-newline (section boundary) or
+        # single-newline (line boundary) to avoid mid-structure cuts.
+        truncated = text[:max_chars]
+        for boundary in ("\n\n", "\n", "。", "！", "？", ".", "!", "?"):
+            last = truncated.rfind(boundary, max_chars - 500)
+            if last > max_chars * 0.6:
+                return truncated[: last + len(boundary)]
+        return truncated
 
     def _query_entities(self, story: Story, query: str) -> set[str]:
+        """从查询字符串中识别引用的角色实体 ID。"""
         entities: set[str] = set()
         for character_id, character in story.characters.items():
             if character_id in query or (character.name and character.name in query):
@@ -101,6 +126,7 @@ class ContextAssembler:
         return entities
 
     def _story_character_node_id(self, story: Story, character_id: str) -> str:
+        """为角色 ID 补全故事前缀，得出图数据库中的完整节点 ID。"""
         story_prefix = f"{story.id}:"
         if character_id.startswith(story_prefix):
             return character_id

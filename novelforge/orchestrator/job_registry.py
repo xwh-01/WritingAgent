@@ -13,6 +13,7 @@ from novelforge.core.models import AutoRevisionReport, AutonomousRunReport, Batc
 
 @dataclass
 class AutoRevisionJob:
+    """后台自动修订作业的数据容器，保存状态、进度、事件和最终结果。"""
     id: str
     story_id: str
     chapter_index: int
@@ -31,6 +32,7 @@ class AutoRevisionJob:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict[str, Any]:
+        """将作业转为可序列化字典，用于 API 响应或序列化。"""
         return {
             "id": self.id,
             "run_id": self.run_id or self.id,
@@ -52,12 +54,15 @@ class AutoRevisionJob:
 
 
 class AutoRevisionJobRegistry:
+    """进程内后台作业注册中心，管理自动修订、批量写作和自主运行作业的生命周期。"""
+
     def __init__(self) -> None:
         self._jobs: dict[str, AutoRevisionJob] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
 
     def start(self, engine, story_id: str, chapter_index: int) -> AutoRevisionJob:
+        """启动单章自动修订后台线程，返回创建的作业对象。"""
         job = AutoRevisionJob(
             id=f"job-{uuid4().hex[:10]}",
             story_id=story_id,
@@ -82,6 +87,7 @@ class AutoRevisionJobRegistry:
         end_chapter: int,
         use_auto_revision: bool = True,
     ) -> AutoRevisionJob:
+        """启动批量写作后台线程，覆盖从 start_chapter 到 end_chapter 的章节范围。"""
         job = AutoRevisionJob(
             id=f"job-{uuid4().hex[:10]}",
             story_id=story_id,
@@ -111,6 +117,7 @@ class AutoRevisionJobRegistry:
         end_chapter: int,
         use_auto_revision: bool = True,
     ) -> AutoRevisionJob:
+        """启动自主智能体写作运行后台线程，由 Supervisor 规划并执行任务。"""
         job = AutoRevisionJob(
             id=f"job-{uuid4().hex[:10]}",
             story_id=story_id,
@@ -132,14 +139,17 @@ class AutoRevisionJobRegistry:
         return job
 
     def get(self, job_id: str) -> AutoRevisionJob | None:
+        """根据作业 ID 获取作业对象，不存在时返回 None。"""
         with self._lock:
             return self._jobs.get(job_id)
 
     def list_for_story(self, story_id: str) -> list[AutoRevisionJob]:
+        """列出指定故事的所有作业（含运行中和已完成的）。"""
         with self._lock:
             return [job for job in self._jobs.values() if job.story_id == story_id]
 
     def request_stop(self, job_id: str, engine) -> bool:
+        """请求停止指定作业关联的自动修订循环，更新作业状态。"""
         job = self.get(job_id)
         if job is None:
             return False
@@ -150,6 +160,7 @@ class AutoRevisionJobRegistry:
         return stopped
 
     def _run(self, job_id: str, engine) -> None:
+        """后台线程入口：执行单章自动修订，记录进度事件和最终结果。"""
         job = self.get(job_id)
         if job is None:
             return
@@ -186,6 +197,7 @@ class AutoRevisionJobRegistry:
         end_chapter: int,
         use_auto_revision: bool,
     ) -> None:
+        """后台线程入口：执行批量章节写作，通过回调转发引擎的进度事件至作业记录。"""
         try:
             total = max(0, end_chapter - start_chapter + 1)
             self.record_progress(
@@ -242,6 +254,7 @@ class AutoRevisionJobRegistry:
         end_chapter: int,
         use_auto_revision: bool,
     ) -> None:
+        """后台线程入口：执行自主智能体写作运行，通过回调转发引擎的进度事件至作业记录。"""
         try:
             self.record_progress(
                 job_id,
@@ -306,6 +319,7 @@ class AutoRevisionJobRegistry:
         task_id: str | None = None,
         run_id: str | None = None,
     ) -> None:
+        """记录作业进度：更新状态、进度计数和事件列表（最多保留120条）。"""
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -347,6 +361,7 @@ class AutoRevisionJobRegistry:
         error: str | None = None,
         message: str | None = None,
     ) -> None:
+        """内部方法：仅更新作业状态字段中传入的非 None 值，并刷新更新时间。"""
         with self._lock:
             job = self._jobs[job_id]
             if status is not None:

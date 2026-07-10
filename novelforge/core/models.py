@@ -10,10 +10,13 @@ from pydantic import BaseModel, Field
 
 
 def utc_now() -> datetime:
+    """返回当前 UTC 时间戳，用作模型中 created_at / updated_at 的默认值。"""
     return datetime.now(timezone.utc)
 
 
 class Character(BaseModel):
+    """故事中的人物角色，包含外貌、性格、动机、弱点、人际关系弧线等属性。"""
+
     id: str
     name: str
     age: int | str = "unknown"
@@ -27,6 +30,8 @@ class Character(BaseModel):
 
 
 class WorldSetting(BaseModel):
+    """世界观设定条目，按类别归类，附带元数据。"""
+
     id: str
     category: str
     content: str
@@ -34,6 +39,8 @@ class WorldSetting(BaseModel):
 
 
 class ChapterOutline(BaseModel):
+    """章节大纲，描述第 n 章的标题、概要和核心冲突。"""
+
     chapter_index: int
     title: str
     summary: str
@@ -42,6 +49,8 @@ class ChapterOutline(BaseModel):
 
 
 class Beat(BaseModel):
+    """场景节拍，定义一个场景的目标与结果。"""
+
     scene_index: int
     description: str
     goal: str
@@ -49,6 +58,8 @@ class Beat(BaseModel):
 
 
 class ChapterVersion(BaseModel):
+    """章节的某个历史版本，用于追溯修改记录。"""
+
     version: int
     content: str
     status: str
@@ -57,6 +68,8 @@ class ChapterVersion(BaseModel):
 
 
 class Chapter(BaseModel):
+    """小说中的一个章节，包含正文、节拍、版本历史等完整信息。"""
+
     index: int
     title: str
     content: str = ""
@@ -67,6 +80,7 @@ class Chapter(BaseModel):
     history: list[ChapterVersion] = Field(default_factory=list)
 
     def snapshot(self) -> ChapterVersion:
+        """拍摄当前章节状态为 ChapterVersion 快照，供历史存档。"""
         return ChapterVersion(
             version=self.version,
             content=self.content,
@@ -75,6 +89,7 @@ class Chapter(BaseModel):
         )
 
     def update_content(self, content: str, status: str | None = None, summary: str | None = None) -> None:
+        """用新内容更新章节：先保存当前快照到历史，再递增版本号并更新字段。"""
         if self.content:
             self.history.append(self.snapshot())
         self.version += 1
@@ -86,6 +101,8 @@ class Chapter(BaseModel):
 
 
 class ReviewReport(BaseModel):
+    """审查报告，记录章节的逻辑、人物、节奏问题及修改建议和裁决。"""
+
     logic_issues: list[str] = Field(default_factory=list)
     character_issues: list[str] = Field(default_factory=list)
     pacing_issues: list[str] = Field(default_factory=list)
@@ -94,6 +111,8 @@ class ReviewReport(BaseModel):
 
 
 class QualityScores(BaseModel):
+    """多维质量评分卡，覆盖逻辑一致性、人物还原度、伏笔处理、节奏、风格统一性五个维度。"""
+
     logic_consistency: float = 0.0
     character_fidelity: float = 0.0
     foreshadowing_handling: float = 0.0
@@ -101,6 +120,7 @@ class QualityScores(BaseModel):
     style_uniformity: float = 0.0
 
     def weighted_total(self, weights: dict[str, float] | None = None) -> float:
+        """按自定义权重计算加权平均分，默认各维度等权重。"""
         active_weights = weights or {
             "logic_consistency": 0.25,
             "character_fidelity": 0.25,
@@ -114,12 +134,18 @@ class QualityScores(BaseModel):
 
 
 class RevisionIssue(BaseModel):
+    """修订问题项，指明问题所属维度、严重程度、段落定位和原文证据。"""
+
     dimension: str
     severity: str = "medium"
     description: str
+    paragraph_range: str = ""
+    evidence: str = ""
 
 
 class ContinuityIssue(BaseModel):
+    """连续性审计中发现的问题，包含证据和建议。"""
+
     dimension: str
     severity: str = "medium"
     description: str
@@ -128,6 +154,8 @@ class ContinuityIssue(BaseModel):
 
 
 class ContinuityAuditReport(BaseModel):
+    """连续性审计报告，给出风险评分、是否通过及问题列表。"""
+
     chapter_index: int
     risk_score: float = 0.0
     passed: bool = True
@@ -137,23 +165,31 @@ class ContinuityAuditReport(BaseModel):
 
 
 class QualityReviewReport(BaseModel):
+    """质量审查报告，汇总评分卡与问题列表，提供总体评价。"""
+
     scores: QualityScores = Field(default_factory=QualityScores)
     issues: list[RevisionIssue] = Field(default_factory=list)
     overall_comment: str = ""
 
     def total_score(self, weights: dict[str, float] | None = None) -> float:
+        """返回加权综合质量分，委托给内嵌的 scores 对象计算。"""
         return self.scores.weighted_total(weights)
 
 
 class AutoRevisionRoundReport(BaseModel):
+    """自动修订流程中某一轮的完整记录，包含审查报告、修订后内容、分数和评分方差。"""
+
     round: int
     review_report: QualityReviewReport
     revised_content: str = ""
     total_score: float = 0.0
+    review_score_variance: float = 0.0
     modification_summary: str = ""
 
 
 class AutoRevisionReport(BaseModel):
+    """自动修订的最终报告，汇总所有轮次记录、最终分数和残留问题。"""
+
     chapter_index: int
     final_content: str = ""
     rounds: list[AutoRevisionRoundReport] = Field(default_factory=list)
@@ -165,6 +201,8 @@ class AutoRevisionReport(BaseModel):
 
 
 class BatchChapterResult(BaseModel):
+    """批量生成中单个章节的结果，含状态、标题、字数和修订分。"""
+
     chapter_index: int
     status: str
     title: str = ""
@@ -174,6 +212,8 @@ class BatchChapterResult(BaseModel):
 
 
 class BatchWriteReport(BaseModel):
+    """批量撰写任务的汇总报告，记录各章节结果、完成数和失败数。"""
+
     start_chapter: int
     end_chapter: int
     use_auto_revision: bool = True
@@ -184,6 +224,8 @@ class BatchWriteReport(BaseModel):
 
 
 class AgentTask(BaseModel):
+    """Agent 执行计划中的单个任务，记录执行状态、起止时间和元数据。"""
+
     id: str
     step_index: int
     agent: str
@@ -201,6 +243,8 @@ class AgentTask(BaseModel):
 
 
 class AutonomousRunReport(BaseModel):
+    """Agent 自主运行的完整报告，包括目标、规划策略、任务列表和完成统计。"""
+
     id: str
     objective: str
     start_chapter: int
@@ -218,6 +262,8 @@ class AutonomousRunReport(BaseModel):
 
 
 class AgentDecision(BaseModel):
+    """Agent 单步决策，描述选择的工具、参数、意图和是否继续的标志。"""
+
     step: int
     intent: str = ""
     selected_tool: str
@@ -232,6 +278,8 @@ class AgentDecision(BaseModel):
 
 
 class AgentTraceStep(BaseModel):
+    """Agent 执行链路中的每一步详细记录，含耗时、评分变化和错误信息。"""
+
     step: int
     run_id: str = ""
     story_id: str = ""
@@ -256,6 +304,8 @@ class AgentTraceStep(BaseModel):
 
 
 class AgentTraceRun(BaseModel):
+    """Agent 一次完整运行的追踪记录，汇聚所有步骤和最终摘要。"""
+
     id: str
     story_id: str
     user_message: str
@@ -268,6 +318,8 @@ class AgentTraceRun(BaseModel):
 
 
 class Foreshadowing(BaseModel):
+    """伏笔记录，标明创建章节、目标章节和当前状态。"""
+
     id: str
     description: str
     created_chapter: int
@@ -277,6 +329,8 @@ class Foreshadowing(BaseModel):
 
 
 class CausalEvent(BaseModel):
+    """因果事件节点，记录事件所在章节及其前因和后果。"""
+
     id: str
     chapter: int
     description: str
@@ -285,6 +339,8 @@ class CausalEvent(BaseModel):
 
 
 class CharacterState(BaseModel):
+    """角色在某一章节的状态快照，含情绪、位置、知识和关系变化。"""
+
     character_id: str
     chapter: int
     emotional_state: str = ""
@@ -294,6 +350,8 @@ class CharacterState(BaseModel):
 
 
 class ChapterSummary(BaseModel):
+    """某章的场景摘要合集，包含各场景摘要、整体总结和关键事件列表。"""
+
     chapter_index: int
     scene_summaries: list[str] = Field(default_factory=list)
     chapter_summary: str = ""
@@ -301,12 +359,16 @@ class ChapterSummary(BaseModel):
 
 
 class VolumeSummary(BaseModel):
+    """卷级别摘要，描述一卷的章节范围和整体概括。"""
+
     volume: int
     chapter_range: tuple[int, int]
     summary: str = ""
 
 
 class ArcSummary(BaseModel):
+    """故事弧摘要，包含章节范围、总结、关键叙事线和未解问题。"""
+
     arc: int
     chapter_range: tuple[int, int]
     summary: str = ""
@@ -315,6 +377,8 @@ class ArcSummary(BaseModel):
 
 
 class StoryBible(BaseModel):
+    """故事圣经 / 设定集，统合核心前提、风格指南、人物名册、世界观规则和连续性约束。"""
+
     core_premise: str = ""
     style_guide: str = ""
     current_direction: str = ""
@@ -326,6 +390,8 @@ class StoryBible(BaseModel):
 
 
 class MemoryCard(BaseModel):
+    """记忆卡片，存储一段标签化的记忆内容及其关联实体和重要性。"""
+
     id: str
     type: str
     content: str
@@ -337,6 +403,8 @@ class MemoryCard(BaseModel):
 
 
 class Story(BaseModel):
+    """小说的根聚合模型，包含所有章节、角色、世界观、伏笔、因果事件、记忆及报告等完整状态。"""
+
     id: UUID = Field(default_factory=uuid4)
     title: str
     premise: str
@@ -365,10 +433,12 @@ class Story(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
     def get_outline(self, chapter_index: int) -> ChapterOutline:
+        """根据章节序号查找对应的大纲，找不到时抛出 KeyError。"""
         for outline in self.outlines:
             if outline.chapter_index == chapter_index:
                 return outline
         raise KeyError(f"Chapter outline {chapter_index} does not exist.")
 
     def touch(self) -> None:
+        """将 updated_at 置为当前 UTC 时间，表示故事状态已变更。"""
         self.updated_at = utc_now()

@@ -19,6 +19,8 @@ from novelforge.orchestrator.trace import (
 
 
 class NovelDirectorAgent(BaseAgent):
+    """小说导演 Agent，根据故事状态与用户指令选择工具并执行运行循环。"""
+
     name = "director"
 
     def run(
@@ -29,6 +31,7 @@ class NovelDirectorAgent(BaseAgent):
         story: Story,
         tool_registry,
     ) -> AgentTraceRun:
+        """执行导演运行循环：决策 → 执行 → 观察 → 重试/继续，直到完成或失败。"""
         run = AgentTraceRun(id=f"trace-{uuid4().hex[:10]}", story_id=story_id, user_message=user_message)
         recovery_attempts = 0
         forced_decision: AgentDecision | None = None
@@ -147,6 +150,7 @@ class NovelDirectorAgent(BaseAgent):
         return run
 
     def _chapter_from_args(self, args: dict) -> int | None:
+        """从工具参数中提取章节索引，非整数时返回 None。"""
         value = args.get("chapter_index")
         return value if isinstance(value, int) else None
 
@@ -158,6 +162,7 @@ class NovelDirectorAgent(BaseAgent):
         error_message: str,
         step: int,
     ) -> AgentDecision:
+        """根据错误类型生成恢复决策：修复参数、补齐前置条件、重试或降级。"""
         chapter = self._safe_chapter(failed.tool_args, story)
         if error_type == ERROR_TOOL_ARG_INVALID:
             fixed_args = dict(failed.tool_args)
@@ -219,12 +224,11 @@ class NovelDirectorAgent(BaseAgent):
         )
 
     def _safe_chapter(self, args: dict, story: Story) -> int:
+        """安全获取章节索引，默认返回当前章节（最小为 1）。"""
         value = args.get("chapter_index")
-        try:
-            chapter = int(value)
-        except Exception:
-            chapter = max(story.current_chapter, 1)
-        return max(1, chapter)
+        if value is None or not isinstance(value, (int, float)):
+            return max(story.current_chapter, 1)
+        return max(1, int(value))
 
     def decide(
         self,
@@ -234,6 +238,7 @@ class NovelDirectorAgent(BaseAgent):
         run: AgentTraceRun,
         tools: list[dict],
     ) -> AgentDecision:
+        """调用 LLM 选择下一步工具，失败时回退到规则决策。"""
         system = (
             "You are NovelDirectorAgent, a tool-using supervisor for a long-form fiction project. "
             "Choose exactly one next tool based on the user's natural-language request and current story state. "
@@ -300,6 +305,7 @@ class NovelDirectorAgent(BaseAgent):
         return decision
 
     def _fallback_decision(self, story: Story, user_message: str, step: int) -> AgentDecision:
+        """基于关键词匹配的规则回退决策，不依赖 LLM。"""
         text = user_message.lower()
         chapter = self._extract_chapter(text) or max(story.current_chapter, 1)
         if "伏笔" in user_message or "foreshadow" in text:
@@ -316,6 +322,7 @@ class NovelDirectorAgent(BaseAgent):
         return AgentDecision(step=step, intent="show_status", selected_tool="show_status", reasoning_summary="Default to showing status when intent is unclear.", tool_args={}, should_continue=False)
 
     def _extract_chapter(self, text: str) -> int | None:
+        """从用户消息文本中提取章节号。"""
         import re
 
         match = re.search(r"(?:第)?\s*(\d+)\s*(?:章|chapter|ch)?", text, re.IGNORECASE)

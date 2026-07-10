@@ -20,6 +20,8 @@ ERROR_UNKNOWN = "unknown_error"
 
 
 class AgentTraceEvent(BaseModel):
+    """智能体轨迹事件的数据模型，记录单次操作的上下文、结果和耗时。"""
+
     run_id: str
     story_id: str = ""
     chapter_index: int | None = None
@@ -41,6 +43,8 @@ class AgentTraceEvent(BaseModel):
 
 
 class TraceRecorder:
+    """轨迹记录器：收集一次运行中的所有 AgentTraceEvent 事件。"""
+
     def __init__(self, run_id: str, story_id: str = "", chapter_index: int | None = None) -> None:
         self.run_id = run_id
         self.story_id = story_id
@@ -48,6 +52,7 @@ class TraceRecorder:
         self.events: list[AgentTraceEvent] = []
 
     def record(self, **kwargs: Any) -> AgentTraceEvent:
+        """创建并追加一条轨迹事件到内部列表，自动填充 run_id 等上下文字段。"""
         data = {
             "run_id": self.run_id,
             "story_id": self.story_id,
@@ -60,6 +65,8 @@ class TraceRecorder:
 
 
 class trace_timer:
+    """上下文管理器：记录代码块的执行耗时（毫秒），结果存储在 duration_ms 属性上。"""
+
     def __enter__(self) -> "trace_timer":
         self._start = perf_counter()
         return self
@@ -71,6 +78,7 @@ class trace_timer:
 
 
 def classify_exception(exc: Exception) -> str:
+    """根据异常消息中的关键词将异常归类为预定义的错误类型常量。"""
     text = str(exc).lower()
     if "provider" in text or "api" in text or "timeout" in text:
         return ERROR_PROVIDER_CALL_FAILED
@@ -86,6 +94,7 @@ def classify_exception(exc: Exception) -> str:
 
 
 def is_recoverable(error_type: str) -> bool:
+    """判断给定的错误类型是否属于可恢复（非致命）错误。"""
     return error_type in {
         ERROR_TOOL_ARG_INVALID,
         ERROR_PRECONDITION_MISSING,

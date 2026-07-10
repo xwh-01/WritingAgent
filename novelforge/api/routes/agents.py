@@ -9,6 +9,7 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 @router.get("/")
 def list_agents() -> dict[str, list[str]]:
+    """GET /agents/ — 返回系统中所有可用代理角色名称列表。"""
     return {
         "agents": [
             "planner",

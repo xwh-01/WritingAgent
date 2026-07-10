@@ -12,6 +12,8 @@ from novelforge.llm.base import LLMClient
 
 
 class ProviderError(RuntimeError):
+    """LLM 提供商调用失败的异常，附带提供商名称和重试次数。"""
+
     def __init__(self, message: str, provider: str = "deepseek", attempts: int = 0):
         super().__init__(message)
         self.error_type = "provider_call_failed"
@@ -20,6 +22,8 @@ class ProviderError(RuntimeError):
 
 
 class DeepSeekClient(LLMClient):
+    """基于 OpenAI SDK 的 DeepSeek API 客户端，支持自动重试和指数退避。"""
+
     def __init__(
         self,
         api_key: str,
@@ -29,6 +33,7 @@ class DeepSeekClient(LLMClient):
         max_retries: int = 3,
         retry_backoff_seconds: float = 1.0,
     ):
+        """初始化 OpenAI 客户端，校验 API Key 并设置超时与重试参数。"""
         if not api_key:
             raise ConfigurationError("DEEPSEEK_API_KEY is required when provider is deepseek.")
         self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
@@ -38,6 +43,7 @@ class DeepSeekClient(LLMClient):
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
 
     def chat_completion(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
+        """发送聊天补全请求，失败时进行指数退避重试，全部失败后抛出 ProviderError。"""
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:

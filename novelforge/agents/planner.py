@@ -7,9 +7,12 @@ from novelforge.core.models import Beat, ChapterOutline
 
 
 class PlannerAgent(BaseAgent):
+    """规划 Agent，生成章节大纲与场景节拍。"""
+
     name = "planner"
 
     def generate_outline(self, premise: str, num_chapters: int) -> list[ChapterOutline]:
+        """根据故事前提生成指定数量的章节大纲，失败时返回规则兜底。"""
         system = (
             "你是专业长篇小说规划师。请严格输出 JSON 数组，每个元素符合 ChapterOutline: "
             "{chapter_index:int,title:str,summary:str,conflict:str,pov_character:str|null}。"
@@ -34,6 +37,7 @@ class PlannerAgent(BaseAgent):
             ]
 
     def generate_beats(self, chapter_outline: ChapterOutline, context: str = "") -> list[Beat]:
+        """为给定章节大纲生成 3-5 个场景节拍，失败时返回默认节拍。"""
         system = (
             "你是小说分场设计师。请严格输出 JSON 数组，每个元素符合 Beat: "
             "{scene_index:int,description:str,goal:str,outcome:str}。"
@@ -53,5 +57,6 @@ class PlannerAgent(BaseAgent):
             ]
 
     def adjust_structure(self, feedback: str) -> str:
+        """根据反馈返回大纲结构调整建议。"""
         system = "你是结构编辑。请根据反馈给出大纲调整建议。"
         return self._chat(system, feedback)

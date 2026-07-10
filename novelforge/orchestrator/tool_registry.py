@@ -18,6 +18,7 @@ from novelforge.orchestrator.trace import (
 
 @dataclass(frozen=True)
 class ToolSpec:
+    """工具规格的不可变数据类，定义工具名称、描述、参数模式和处理器。"""
     name: str
     description: str
     args_schema: dict[str, str]
@@ -26,12 +27,15 @@ class ToolSpec:
 
 
 class ToolRegistry:
+    """导演智能体的工具注册中心，注册引擎操作作为可调用工具，支持参数校验和轨迹记录。"""
+
     def __init__(self, engine) -> None:
         self.engine = engine
         self._tools: dict[str, ToolSpec] = {}
         self._register_defaults()
 
     def list_specs(self) -> list[dict[str, Any]]:
+        """返回所有已注册工具的列表，含名称、描述和 JSON Schema。"""
         return [
             {
                 "name": tool.name,
@@ -43,9 +47,11 @@ class ToolRegistry:
         ]
 
     def has_tool(self, name: str) -> bool:
+        """检查指定名称的工具是否已注册。"""
         return name in self._tools
 
     def execute(self, name: str, args: dict[str, Any] | None = None, run_id: str = "") -> dict[str, Any]:
+        """执行指定工具：校验参数、调用处理器、记录轨迹，返回统一格式的结果字典。"""
         args = args or {}
         if name not in self._tools:
             return self._error_result(name, args, ERROR_TOOL_ARG_INVALID, f"Unknown director tool: {name}", run_id)
@@ -71,6 +77,7 @@ class ToolRegistry:
         return result
 
     def _register(self, name: str, description: str, args_schema: dict[str, str], handler: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
+        """向注册中心添加一个新工具。"""
         self._tools[name] = ToolSpec(
             name=name,
             description=description,
@@ -88,6 +95,7 @@ class ToolRegistry:
         run_id: str,
         duration_ms: int = 0,
     ) -> dict[str, Any]:
+        """构造工具执行失败的标准化错误结果字典。"""
         result = {
             "success": False,
             "selected_tool": name,
@@ -102,6 +110,7 @@ class ToolRegistry:
         return result
 
     def _trace_event(self, name: str, args: dict[str, Any], result: dict[str, Any], run_id: str, duration_ms: int) -> dict[str, Any]:
+        """根据工具调用结果构造一条标准化的轨迹事件字典。"""
         try:
             story_id = str(self._story().id)
         except Exception:
@@ -140,9 +149,11 @@ class ToolRegistry:
         self._register("list_foreshadowings", "List foreshadowings, optionally filtered by status.", {"status": "str optional"}, self._list_foreshadowings)
 
     def _story(self):
+        """获取引擎中当前活动故事对象的便捷方法。"""
         return self.engine._require_story()
 
     def _chapter_index(self, args: dict[str, Any]) -> int:
+        """从工具参数中提取 chapter_index，默认使用当前章节，校验为整数后返回。"""
         value = args.get("chapter_index")
         if value is None:
             story = self._story()
@@ -153,6 +164,7 @@ class ToolRegistry:
             raise WorkflowError("chapter_index must be an integer.") from exc
 
     def _show_status(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：显示当前故事的进度摘要（标题、章节数、角色数、记忆卡数等）。"""
         story = self._story()
         data = {
             "story_id": str(story.id),
@@ -168,30 +180,36 @@ class ToolRegistry:
         return {"observation": f"{story.title}: ch{story.current_chapter}, {len(story.chapters)} drafted, {len(story.foreshadowings)} foreshadowings.", "data": data}
 
     def _create_outline(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：创建或扩展章节大纲。"""
         story = self._story()
         num_chapters = int(args.get("num_chapters") or max(len(story.outlines), story.current_chapter, 1) or self.engine.config.story.default_chapters)
         outlines = self.engine.generate_outline(num_chapters)
         return {"observation": f"Created outline with {len(outlines)} chapters.", "data": [item.model_dump() for item in outlines]}
 
     def _create_beats(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：为指定章节生成场景节拍。"""
         chapter = self.engine.generate_beats(self._chapter_index(args))
         return {"observation": f"Created {len(chapter.beats)} beats for chapter {chapter.index}.", "data": chapter.model_dump()}
 
     def _write_chapter(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：撰写指定章节的草稿内容。"""
         chapter = self.engine.write_chapter(self._chapter_index(args))
         return {"observation": f"Wrote chapter {chapter.index}: {chapter.title} ({len(chapter.content)} chars).", "data": chapter.model_dump()}
 
     def _review_chapter(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：对指定章节执行逻辑、角色和节奏评审。"""
         chapter_index = self._chapter_index(args)
         report = self.engine.request_review(chapter_index)
         issue_count = len(report.logic_issues) + len(report.character_issues) + len(report.pacing_issues)
         return {"observation": f"Reviewed chapter {chapter_index}: {issue_count} issues, verdict={report.verdict}.", "data": report.model_dump()}
 
     def _revise_chapter(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：基于最新评审报告或手动提供的修订内容修改章节。"""
         chapter = self.engine.apply_revision(self._chapter_index(args), args.get("revised_content"))
         return {"observation": f"Revised chapter {chapter.index}: {chapter.title} v{chapter.version}.", "data": chapter.model_dump()}
 
     def _auto_write_chapter(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：对指定章节执行写作→评审→修订自动化循环。"""
         chapter_index = self._chapter_index(args)
         report = self.engine.auto_write_chapter(chapter_index)
         return {
@@ -201,11 +219,13 @@ class ToolRegistry:
         }
 
     def _audit_continuity(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：审计指定章节的长篇连续性。"""
         chapter_index = self._chapter_index(args)
         report = self.engine.audit_chapter_continuity(chapter_index)
         return {"observation": f"Audited chapter {chapter_index}: risk={report.risk_score:.1f}, passed={report.passed}.", "data": report.model_dump()}
 
     def _update_memory(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：重新索引指定章节的记忆数据（角色、世界观）并审计连续性。"""
         story = self._story()
         chapter_index = self._chapter_index(args)
         chapter = story.chapters.get(chapter_index)
@@ -220,6 +240,7 @@ class ToolRegistry:
         }
 
     def _list_foreshadowings(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：列出故事中的伏笔条目，可按状态筛选。"""
         story = self._story()
         status = args.get("status")
         items = story.foreshadowings

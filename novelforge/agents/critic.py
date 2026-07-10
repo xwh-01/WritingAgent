@@ -10,6 +10,8 @@ from novelforge.core.models import ChapterOutline, Character, QualityReviewRepor
 
 
 class CriticAgent(BaseAgent):
+    """批评家 Agent，对章节进行写作质量与连续性审查。"""
+
     name = "critic"
 
     def review_chapter(
@@ -20,6 +22,7 @@ class CriticAgent(BaseAgent):
         plot_memory: list[dict[str, Any]] | str,
         longform_context: str = "",
     ) -> ReviewReport:
+        """对章节进行综合审查，检查逻辑、人设和节奏问题并给出修改建议。"""
         system = (
             "你是专业小说编辑，检查逻辑漏洞、人设不一致、节奏问题并给修改建议。"
             "请严格输出 ReviewReport JSON: "
@@ -49,6 +52,7 @@ class CriticAgent(BaseAgent):
         story: Story,
         extra_context: str = "",
     ) -> QualityReviewReport:
+        """生成量化的质量评分卡，包含各维度分数与具体问题。"""
         system = (
             "你是专业小说审查员。基于章节内容、大纲和故事全局状态，评估质量并严格输出 JSON。\n"
             "JSON 格式：{\n"
@@ -60,7 +64,13 @@ class CriticAgent(BaseAgent):
             '    "style_uniformity": 1-10\n'
             "  },\n"
             '  "issues": [\n'
-            '    {"dimension": "逻辑/人设/伏笔/节奏/风格", "severity": "high/medium/low", "description": "具体问题描述"}\n'
+            '    {\n'
+            '      "dimension": "逻辑/人设/伏笔/节奏/风格",\n'
+            '      "severity": "high/medium/low",\n'
+            '      "description": "具体问题描述",\n'
+            '      "paragraph_range": "段落编号或范围（如"段落3-5"），必须根据正文定位到具体位置",\n'
+            '      "evidence": "触发此问题的原文短句（12-30字）"\n'
+            '    }\n'
             "  ],\n"
             '  "overall_comment": "简短总评"\n'
             "}\n"
@@ -85,6 +95,7 @@ class CriticAgent(BaseAgent):
             return self._fallback_quality_review(content, chapter_outline, story)
 
     def _get_memory_snapshot(self, story: Story) -> str:
+        """收集故事全局内存快照：伏笔、因果事件、角色状态与章节摘要。"""
         pending_foreshadowings = [item.model_dump() for item in story.foreshadowings if item.status == "pending"][-10:]
         recent_events = [item.model_dump() for item in sorted(story.causal_events, key=lambda event: event.chapter)[-12:]]
         latest_states = {}
@@ -108,7 +119,22 @@ class CriticAgent(BaseAgent):
         return json.dumps(snapshot, ensure_ascii=False)
 
     def _fallback_quality_review(self, content: str, chapter_outline: ChapterOutline, story: Story) -> QualityReviewReport:
+        """质量审查的规则兜底：检查篇幅、冲突体现、伏笔回收与风格一致性。
+
+        当无法调用 LLM 时，基于关键词位置估算段落范围。
+        """
         from novelforge.core.models import QualityScores, RevisionIssue
+
+        paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+        total_paras = max(len(paragraphs), 1)
+
+        def _estimate_range(keywords: tuple[str, ...]) -> str:
+            """根据关键词首次出现位置估算段落范围。"""
+            for i, para in enumerate(paragraphs, 1):
+                if any(kw in para for kw in keywords):
+                    para_end = min(i + 1, total_paras)
+                    return f"段落{i}-{para_end}" if para_end > i else f"段落{i}"
+            return ""
 
         issues: list[RevisionIssue] = []
         scores = QualityScores(
@@ -120,10 +146,20 @@ class CriticAgent(BaseAgent):
         )
         if len(content.strip()) < 300:
             scores.pacing = 6.0
-            issues.append(RevisionIssue(dimension="节奏", severity="medium", description="章节篇幅偏短，情节推进和场景层次可能不足。"))
+            issues.append(RevisionIssue(
+                dimension="节奏", severity="medium",
+                description="章节篇幅偏短，情节推进和场景层次可能不足。",
+                paragraph_range=f"全文共{total_paras}段",
+            ))
         if chapter_outline.conflict and not any(token in content for token in ("冲突", "选择", "危险", "代价", "阻力", "失败")):
             scores.logic_consistency = 6.5
-            issues.append(RevisionIssue(dimension="逻辑", severity="medium", description="正文没有充分体现章节大纲中的核心冲突。"))
+            conflict_range = _estimate_range(("冲突", "选择", "对抗"))
+            issues.append(RevisionIssue(
+                dimension="逻辑", severity="medium",
+                description="正文没有充分体现章节大纲中的核心冲突。",
+                paragraph_range=conflict_range,
+                evidence=chapter_outline.conflict[:40],
+            ))
         pending_due = [
             item
             for item in story.foreshadowings
@@ -131,10 +167,15 @@ class CriticAgent(BaseAgent):
         ]
         if pending_due:
             scores.foreshadowing_handling = 6.0
-            issues.append(RevisionIssue(dimension="伏笔", severity="high", description="存在计划回收但尚未处理的伏笔。"))
+            issues.append(RevisionIssue(
+                dimension="伏笔", severity="high",
+                description="存在计划回收但尚未处理的伏笔。",
+                evidence=pending_due[0].description[:60],
+            ))
         if story.style_guide and not any(word in content for word in story.style_guide.split()[:3]):
             scores.style_uniformity = 7.0
         return QualityReviewReport(scores=scores, issues=issues, overall_comment="规则兜底审查完成。")
 
     def _clamp(self, value: float) -> float:
+        """将分数钳制在 1.0 到 10.0 范围内。"""
         return max(1.0, min(10.0, float(value)))

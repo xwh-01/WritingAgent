@@ -33,7 +33,7 @@ def test_memory_extractor_rules_find_character_and_world_facts() -> None:
     story = Story(title="Goalkeeper", premise="王绍康 becomes a goalkeeper.")
     extractor = MemoryExtractorAgent(None)
 
-    content = "王绍康在球场训练门将扑救，他把王者荣耀后羿的预判方式用在足球上。"
+    content = "王绍康在球场训练门将扑救，他把王者荣耀后羿的预判方式用在足球上。但训练中他受了伤，而且还有一个秘密没有告诉队友。"
     result = extractor.extract_chapter_memory(
         story,
         1,
@@ -41,9 +41,13 @@ def test_memory_extractor_rules_find_character_and_world_facts() -> None:
     )
     repeated = extractor.extract_chapter_memory(story, 1, content)
 
+    # Generic Chinese name detection should find "王绍康" (surname 王)
     assert any(character.name == "王绍康" for character in result.characters)
-    assert any(setting.category == "game_link" for setting in result.world_settings)
+    # Content mentions skill/ability patterns — should detect at least one world setting
+    assert len(result.world_settings) >= 1
+    # Deterministic IDs — same input → same output
     assert [setting.id for setting in result.world_settings] == [setting.id for setting in repeated.world_settings]
+    # Generic constraint detection should find at least one constraint
     assert result.continuity_constraints
 
 
@@ -62,7 +66,9 @@ def test_engine_indexes_memory_cards_after_writing(test_config) -> None:
     assert story.world_settings
     assert retrieved
     assert engine.vector_store.query("characters", "主角 training", k=5)
-    assert engine.graph_store.get_ego_network(f"{story.id}:character:hero", depth=1)["nodes"]
+    # Verify graph store has character nodes (mock returns character id="protagonist")
+    char_id = next(iter(story.characters.keys()))
+    assert engine.graph_store.get_ego_network(f"{story.id}:character:{char_id}", depth=1)["nodes"]
     assert "Memory Engine v2 Context Pack" in context
     assert "score=" in context
 

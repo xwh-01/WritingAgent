@@ -10,6 +10,7 @@ AUTO_REVISION_JOBS = AutoRevisionJobRegistry()
 
 
 def get_engine(story_id: str) -> NovelForgeEngine:
+    """根据故事 ID 获取或创建对应的 NovelForgeEngine 实例，并缓存在全局字典中。"""
     engine = ENGINES.get(story_id)
     if engine is not None:
         return engine

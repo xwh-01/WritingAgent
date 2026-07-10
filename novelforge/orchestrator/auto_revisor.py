@@ -21,12 +21,16 @@ from novelforge.orchestrator.trace import ERROR_QUALITY_GATE_FAILED, TraceRecord
 
 @dataclass
 class AutoRevisorConfig:
+    """自动修订器配置：最大轮次、通过阈值、采样数和品质评分权重。"""
     max_rounds: int = 5
     pass_threshold: float = 8.5
+    score_samples: int = 3
     quality_weights: dict[str, float] | None = None
 
 
 class AutoRevisor:
+    """自主迭代审阅和修订循环器：写作→评审→修订，直至品质达标或达到最大轮次。"""
+
     def __init__(
         self,
         story: Story,
@@ -36,6 +40,7 @@ class AutoRevisor:
         assembler: ContextAssembler,
         config: AutoRevisorConfig,
     ) -> None:
+        """初始化修订器，注入故事对象、写作/评审/编辑智能体和上下文装配器。"""
         self.story = story
         self.writer = writer
         self.critic = critic
@@ -47,9 +52,19 @@ class AutoRevisor:
         self.status = "idle"
 
     def request_stop(self) -> None:
+        """设置停止标志，请求在下一次循环检查时中止修订。"""
         self.stop_requested = True
 
-    def run(self, chapter_index: int) -> AutoRevisionReport:
+    def run(self, chapter_index: int, continuity_issues: list | None = None) -> AutoRevisionReport:
+        """执行自动修订主循环：生成初稿、逐轮评审→修订，直至通过或达到最大轮次。
+
+        Args:
+            chapter_index: 章节编号。
+            continuity_issues: 可选的连续性审计问题列表（ContinuityIssue），
+                               将注入到每轮修订的 QualityReviewReport 中。
+        """
+        import statistics
+
         self.status = "writing"
         self.stop_requested = False
         recorder = TraceRecorder(
@@ -77,26 +92,67 @@ class AutoRevisor:
                 break
             self.current_round = round_num
             self.status = f"reviewing_round_{round_num}"
+
+            # ── Multi-sample scoring ──
+            samples = max(1, self.config.score_samples)
+            sample_scores: list[QualityReviewReport] = []
+            sample_totals: list[float] = []
             with trace_timer() as review_timer:
-                review = self.critic.review_quality_scorecard(
-                    current_content,
-                    self.story.get_outline(chapter_index),
-                    self.story,
-                    self.assembler.assemble_writing_context(chapter_index, self.story),
-                )
+                assembled_ctx = self.assembler.assemble_writing_context(chapter_index, self.story)
+                for _ in range(samples):
+                    sample = self.critic.review_quality_scorecard(
+                        current_content,
+                        self.story.get_outline(chapter_index),
+                        self.story,
+                        assembled_ctx,
+                    )
+                    sample_scores.append(sample)
+                    sample_totals.append(sample.total_score(self.config.quality_weights))
+
+            # Use median of each dimension across samples
+            if samples > 1:
+                review = sample_scores[0]
+                review.scores.logic_consistency = round(statistics.median(
+                    [s.scores.logic_consistency for s in sample_scores]), 2)
+                review.scores.character_fidelity = round(statistics.median(
+                    [s.scores.character_fidelity for s in sample_scores]), 2)
+                review.scores.foreshadowing_handling = round(statistics.median(
+                    [s.scores.foreshadowing_handling for s in sample_scores]), 2)
+                review.scores.pacing = round(statistics.median(
+                    [s.scores.pacing for s in sample_scores]), 2)
+                review.scores.style_uniformity = round(statistics.median(
+                    [s.scores.style_uniformity for s in sample_scores]), 2)
+                # Merge unique issues from all samples
+                seen_descs = set()
+                merged_issues = []
+                for s in sample_scores:
+                    for issue in s.issues:
+                        if issue.description not in seen_descs:
+                            seen_descs.add(issue.description)
+                            merged_issues.append(issue)
+                review.issues = merged_issues
+                review.overall_comment = f"{samples}-sample median review: " + review.overall_comment
+            else:
+                review = sample_scores[0]
+
             total_score = review.total_score(self.config.quality_weights)
+            score_variance = round(statistics.variance(sample_totals), 4) if len(sample_totals) > 1 else 0.0
+
             recorder.record(
                 stage="auto_revisor",
                 action=f"review_round_{round_num}",
-                input_summary=f"Review chapter {chapter_index} round {round_num}.",
-                output_summary=f"Quality score={total_score:.2f}",
+                input_summary=f"Review chapter {chapter_index} round {round_num} ({samples} samples).",
+                output_summary=f"Quality score={total_score:.2f} (median of {samples}, variance={score_variance:.4f})",
                 observation=f"Round {round_num} review score {total_score:.2f}.",
                 memory_hits_count=int(getattr(self.assembler, "last_context_stats", {}).get("memory_hits_count", 0) or 0),
                 review_score_before=previous_score,
                 review_score_after=total_score,
                 success=total_score >= self.config.pass_threshold,
                 error_type="" if total_score >= self.config.pass_threshold else ERROR_QUALITY_GATE_FAILED,
-                error_message="" if total_score >= self.config.pass_threshold else "Quality score below pass threshold.",
+                error_message="" if total_score >= self.config.pass_threshold else (
+                    f"Quality score {total_score:.2f} below pass threshold {self.config.pass_threshold:.1f}"
+                    + (f" (variance={score_variance:.4f}, evaluator may be unstable)" if score_variance > 2.0 else "")
+                ),
                 duration_ms=review_timer.duration_ms,
             )
             if total_score >= self.config.pass_threshold:
@@ -106,6 +162,7 @@ class AutoRevisor:
                         review_report=review,
                         revised_content=current_content,
                         total_score=total_score,
+                        review_score_variance=score_variance,
                         modification_summary="达到通过阈值，无需继续修订。",
                     )
                 )
@@ -113,6 +170,27 @@ class AutoRevisor:
                 result.final_score = total_score
                 result.final_content = current_content
                 break
+
+            # ── Inject continuity issues into revision ──
+            if continuity_issues:
+                from novelforge.core.models import ContinuityIssue, RevisionIssue as RevIssue
+                for ci in continuity_issues:
+                    if isinstance(ci, dict):
+                        review.issues.append(RevIssue(
+                            dimension=f"continuity:{ci.get('dimension', 'unknown')}",
+                            severity=ci.get("severity", "medium"),
+                            description=ci.get("description", ""),
+                            evidence=ci.get("evidence", ""),
+                            paragraph_range="",
+                        ))
+                    else:
+                        review.issues.append(RevIssue(
+                            dimension=f"continuity:{getattr(ci, 'dimension', 'unknown')}",
+                            severity=getattr(ci, 'severity', 'medium'),
+                            description=getattr(ci, 'description', ''),
+                            evidence=getattr(ci, 'evidence', ''),
+                            paragraph_range="",
+                        ))
 
             self.status = f"revising_round_{round_num}"
             with trace_timer() as revise_timer:
@@ -123,6 +201,7 @@ class AutoRevisor:
                     review_report=review,
                     revised_content=revised,
                     total_score=total_score,
+                    review_score_variance=score_variance,
                     modification_summary=self._summarize_revision(current_content, revised, review),
                 )
             )
@@ -141,12 +220,13 @@ class AutoRevisor:
             previous_score = total_score
 
         if not result.passed and not result.stopped:
+            assembled_ctx = self.assembler.assemble_writing_context(chapter_index, self.story)
             with trace_timer() as final_timer:
                 final_review = self.critic.review_quality_scorecard(
                     current_content,
                     self.story.get_outline(chapter_index),
                     self.story,
-                    self.assembler.assemble_writing_context(chapter_index, self.story),
+                    assembled_ctx,
                 )
             result.final_score = final_review.total_score(self.config.quality_weights)
             result.final_content = current_content
@@ -182,6 +262,7 @@ class AutoRevisor:
         return result
 
     def _initial_draft(self, chapter_index: int) -> str:
+        """获取或生成指定章节的初稿内容作为修订循环的起点。"""
         chapter = self.story.chapters.get(chapter_index)
         if chapter and chapter.content:
             return chapter.content
@@ -197,6 +278,7 @@ class AutoRevisor:
         return content
 
     def _summarize_revision(self, before: str, after: str, review: QualityReviewReport) -> str:
+        """生成本轮修订的摘要文本，说明涉及的问题维度和字数变化。"""
         issue_count = len(review.issues)
         length_delta = len(after) - len(before)
         if issue_count:

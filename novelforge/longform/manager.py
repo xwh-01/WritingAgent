@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from novelforge.agents.memory_extractor import MemoryExtractionResult, MemoryExtractorAgent
 from novelforge.core.models import CharacterState, Foreshadowing, Story
@@ -15,20 +15,39 @@ from novelforge.longform.memory_engine import MemoryEngineV2
 from novelforge.longform.pacing import PacingAnalyzer
 from novelforge.longform.summaries import SummaryManager
 
+if TYPE_CHECKING:
+    from novelforge.core.config import MemoryRankerConfig
+
 
 class LongformManager:
-    def __init__(self, llm: LLMClient | None = None) -> None:
+    """长篇写作的统一协调器，聚合伏笔、因果、记忆、摘要、节奏和角色状态等子系统。
+
+    为上层提供 process_new_chapter（处理新章节）和 get_enhanced_context（生成增强上下文）两个主要入口。
+    """
+
+    def __init__(self, llm: LLMClient | None = None, memory_ranker_config: "MemoryRankerConfig | None" = None) -> None:
+        """初始化所有子系统。
+
+        Args:
+            llm: 可选的 LLM 客户端，为 None 时各子系统使用规则回退。
+            memory_ranker_config: MemoryRanker 配置，为 None 时使用默认权重。
+        """
         self.foreshadowing_tracker = ForeshadowingTracker(llm)
         self.causality_tracker = CausalityTracker(llm)
         self.memory_extractor = MemoryExtractorAgent(llm)
         self.summary_manager = SummaryManager(llm)
-        self.memory_engine = MemoryEngineV2()
+        self.memory_engine = MemoryEngineV2(memory_ranker_config=memory_ranker_config)
         self.pacing_analyzer = PacingAnalyzer()
         self.character_state_tracker = CharacterStateTracker(llm)
         self.pacing_history: dict[str, list[dict[str, Any]]] = {}
         self.pacing_warnings: dict[str, str] = {}
 
     def process_new_chapter(self, story: Story, chapter_index: int, content: str) -> dict[str, Any]:
+        """处理新章节的完整管线。
+
+        依次执行：记忆提取 → 应用提取结果 → 章节摘要 → 因果事件 → 伏笔分析 → 角色状态 → 节奏分析 → 卷摘要 → 记忆引擎更新。
+        返回包含各阶段结果的字典。
+        """
         extraction = self.memory_extractor.extract_chapter_memory(story, chapter_index, content)
         self._apply_extraction(story, extraction)
         summary = self.summary_manager.generate_chapter_summary(story, chapter_index, content)
@@ -69,6 +88,10 @@ class LongformManager:
         }
 
     def _apply_extraction(self, story: Story, extraction: MemoryExtractionResult) -> None:
+        """将 MemoryExtractor 的提取结果合并到 story 中。
+
+        合并角色、世界设定、关系和连续性约束，对已有内容做增量更新。
+        """
         for character in extraction.characters:
             existing = story.characters.get(character.id)
             if existing is None:
@@ -112,6 +135,7 @@ class LongformManager:
                 story.story_bible.continuity_constraints.append(constraint)
 
     def _merge_text(self, old: str, new: str) -> str:
+        """合并两段文本：如果 new 已包含在 old 中则保留 old，否则用分号拼接。"""
         if not old:
             return new
         if new in old:
@@ -119,6 +143,7 @@ class LongformManager:
         return f"{old}; {new}"
 
     def get_enhanced_context(self, chapter_index: int, story: Story, query: str = "") -> str:
+        """生成增强写作上下文，聚合记忆引擎上下文包、滚动摘要、未回收伏笔和角色当前状态。"""
         sections: list[str] = []
         pack = self.memory_engine.build_context_pack(story, chapter_index, query=query)
         packed_context = self.memory_engine.format_context_pack(pack)
@@ -162,6 +187,7 @@ class LongformManager:
         return "\n\n".join(sections)
 
     def review_chapter_consistency(self, story: Story, chapter_index: int, content: str) -> dict[str, list[str]]:
+        """审查章节一致性，返回伏笔、节奏和角色状态三方面的问题列表。"""
         pending_due = [
             f"伏笔 {item.id} 计划在第{item.target_chapter}章回收，但仍为 pending：{item.description}"
             for item in story.foreshadowings
@@ -191,6 +217,7 @@ class LongformManager:
         target_chapter: int | None = None,
         notes: str = "",
     ) -> Foreshadowing:
+        """手动添加一条伏笔到故事中，通过 ForeshadowingTracker 注册并返回。"""
         item = Foreshadowing(
             id=f"fs-manual-{len(story.foreshadowings) + 1}",
             description=description,

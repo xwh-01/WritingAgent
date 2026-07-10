@@ -9,6 +9,8 @@ from novelforge.core.models import ChapterOutline, ContinuityAuditReport, Contin
 
 
 class ContinuityAuditorAgent(BaseAgent):
+    """连续性审计 Agent，检查长篇小说的长期一致性风险。"""
+
     name = "continuity_auditor"
 
     def audit_chapter(
@@ -18,6 +20,7 @@ class ContinuityAuditorAgent(BaseAgent):
         content: str,
         longform_context: str = "",
     ) -> ContinuityAuditReport:
+        """审计章节的连续性风险：伏笔、因果关系、人物状态、设定一致性与章节目标。"""
         outline = None
         try:
             outline = story.get_outline(chapter_index)
@@ -56,6 +59,7 @@ class ContinuityAuditorAgent(BaseAgent):
         content: str,
         outline: ChapterOutline | None,
     ) -> ContinuityAuditReport:
+        """基于规则的连续性审计兜底：检查伏笔到期、冲突体现、约束遵守、位置跳变。"""
         issues: list[ContinuityIssue] = []
         checked = list(story.story_bible.continuity_constraints[:20])
 
@@ -125,6 +129,7 @@ class ContinuityAuditorAgent(BaseAgent):
         )
 
     def _important_terms(self, text: str) -> list[str]:
+        """提取文本中的重要词汇（≥3 个字符的词或中文字符）。"""
         raw = [item.strip("，。,.!?;:()[]{}\"'") for item in text.split()]
         terms = [item.lower() for item in raw if len(item) >= 3]
         if terms:
@@ -132,4 +137,5 @@ class ContinuityAuditorAgent(BaseAgent):
         return [char for char in text if "\u4e00" <= char <= "\u9fff"][:8]
 
     def _clamp(self, value: float) -> float:
+        """将分数钳制在 0.0 到 10.0 范围内。"""
         return max(0.0, min(10.0, float(value)))

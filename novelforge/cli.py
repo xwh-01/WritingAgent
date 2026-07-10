@@ -15,14 +15,18 @@ from novelforge.dashboard.data_provider import DashboardDataProvider
 
 
 class NovelForgeShell(cmd2.Cmd):
+    """NovelForge 交互式命令行 Shell，提供故事创建、大纲生成、章节写作、评审等全部操作命令。"""
+
     prompt = "novelforge> "
     intro = "NovelForge ready. Type /help for commands."
 
     def __init__(self, engine: NovelForgeEngine | None = None):
+        """初始化 Shell 并绑定 NovelForgeEngine 实例。"""
         super().__init__()
         self.engine = engine or NovelForgeEngine()
 
     def onecmd(self, line: str):  # type: ignore[override]
+        """解析用户输入，将 / 前缀命令规范化后交给 cmd2 处理。"""
         if line.startswith("/"):
             line = line[1:]
         if line:
@@ -343,6 +347,7 @@ class NovelForgeShell(cmd2.Cmd):
         self._print_auto_report(report)
 
     def _print_auto_report(self, result) -> None:
+        """以彩色终端格式打印自动修订报告，包括状态、各轮分数、问题详情和残留问题。"""
         bold = "\033[1m"
         green = "\033[32m"
         red = "\033[31m"
@@ -414,6 +419,7 @@ class NovelForgeShell(cmd2.Cmd):
 
 
 def main() -> int:
+    """启动 NovelForge 命令行交互界面。如果传入 --help 则打印帮助信息，否则进入 cmdloop。"""
     if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
         print(
             "NovelForge CLI\n\n"

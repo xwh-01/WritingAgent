@@ -8,12 +8,14 @@ from typing import Any
 
 
 def trace_to_json(run) -> dict[str, Any]:
+    """将运行对象序列化为 JSON 兼容字典，确保包含 trace_events 键。"""
     payload = run.model_dump() if hasattr(run, "model_dump") else dict(run)
     payload.setdefault("trace_events", [])
     return payload
 
 
 def write_trace_json(run, output_path: str | Path) -> Path:
+    """将运行轨迹序列化为 JSON 文件写入磁盘，返回输出路径。"""
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(trace_to_json(run), ensure_ascii=False, indent=2, default=str), encoding="utf-8")
@@ -21,6 +23,7 @@ def write_trace_json(run, output_path: str | Path) -> Path:
 
 
 def render_debug_report(run) -> str:
+    """将运行轨迹渲染为人类可读的 Markdown 调试报告字符串。"""
     data = trace_to_json(run)
     events = data.get("trace_events") or []
     steps = data.get("steps") or []
@@ -58,6 +61,7 @@ def render_debug_report(run) -> str:
 
 
 def write_debug_report(run, output_path: str | Path) -> Path:
+    """将调试报告写入 Markdown 文件，返回输出路径。"""
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_debug_report(run), encoding="utf-8")
@@ -65,6 +69,7 @@ def write_debug_report(run, output_path: str | Path) -> Path:
 
 
 def _format_event(index: int, event: dict[str, Any]) -> list[str]:
+    """将单条事件字典格式化为 Markdown 段落列表（含工具、评分、耗时、错误等信息）。"""
     score_before = event.get("review_score_before")
     score_after = event.get("review_score_after")
     score_text = ""

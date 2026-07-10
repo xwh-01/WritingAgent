@@ -9,16 +9,36 @@ from typing import Any
 
 
 class IPacingAnalyzer(ABC):
+    """节奏分析器的抽象接口。"""
+
     @abstractmethod
     def analyze_chapter(self, content: str) -> dict[str, Any]:
+        """分析单个章节的节奏指标，返回包含冲突强度、对话占比等指标的字典。"""
         raise NotImplementedError
 
 
 class PacingAnalyzer(IPacingAnalyzer):
-    conflict_words = ("冲突", "怒", "战", "追", "逃", "危险", "失败", "秘密", "真相", "背叛", "受伤", "选择")
-    action_words = ("冲", "跑", "扑", "射", "挡", "击", "推", "摔", "喊", "抢", "扑救")
+    """基于规则和统计的节奏分析器，对章节冲突强度、对话密度等进行量化评估。
+
+    使用跨类型通用的信号词表，适用于奇幻、科幻、言情、悬疑、武侠、现实等各类小说。
+    """
+
+    # Genre-agnostic conflict words — tension, opposition, stakes, failure.
+    conflict_words: tuple[str, ...] = (
+        "冲突", "怒", "战", "追", "逃", "危险", "失败", "秘密", "真相", "背叛", "受伤", "选择",
+        "争", "夺", "杀", "死", "恨", "牺牲", "威胁", "恐惧", "阴谋",
+        "fight", "battle", "conflict", "danger", "betray", "kill", "threat",
+    )
+
+    # Genre-agnostic action words — physical movement, decisive action.
+    action_words: tuple[str, ...] = (
+        "冲", "跑", "扑", "击", "推", "摔", "喊", "抢",
+        "跳", "拉", "踢", "砍", "刺", "射", "挡", "爬",
+        "rush", "strike", "push", "grab", "jump", "kick", "slash", "block",
+    )
 
     def analyze_chapter(self, content: str) -> dict[str, Any]:
+        """统计章节中的冲突词、动作词、对话行等，返回五维节奏指标。"""
         lines = [line.strip() for line in content.splitlines() if line.strip()]
         total_lines = max(len(lines), 1)
         dialogue_lines = sum(1 for line in lines if self._is_dialogue(line))
@@ -38,6 +58,7 @@ class PacingAnalyzer(IPacingAnalyzer):
         }
 
     def check_pacing_trend(self, analyses: list[dict[str, Any]]) -> str:
+        """根据最近几章的节奏分析结果判断趋势，返回正常或预警信息。"""
         if not analyses:
             return "暂无节奏数据。"
         recent = analyses[-3:]
@@ -50,4 +71,16 @@ class PacingAnalyzer(IPacingAnalyzer):
         return "节奏趋势正常。"
 
     def _is_dialogue(self, line: str) -> bool:
-        return line.startswith(("“", "\"", "「", "'")) or "：" in line or ":" in line
+        """判断一行文本是否为对话行（以引号开头或包含冒号式对话标记）。
+
+        对中文小说，对话常以 "" 或「」开头。
+        对英文小说，对话以 " 或 ' 开头。
+        为避免冒号误判（如 "Chapter 3: The Beginning"），
+        冒号检测需要前面有非空格的汉字或字母。
+        """
+        if line.startswith((""", """, "\"", "'", "「")):
+            return True
+        # Colon-style dialogue markers: "某某：..."  or "Name: ..."
+        if re.search(r"[一-鿿a-zA-Z]：", line):
+            return True
+        return False

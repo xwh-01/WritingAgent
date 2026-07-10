@@ -47,6 +47,8 @@ from novelforge.storage.repository import StoryRepository
 
 
 class WorkflowState(StrEnum):
+    """小说写作工作流的有限状态枚举，覆盖从规划到完成的各阶段。"""
+
     PLANNING = "planning"
     OUTLINE_GENERATED = "outline_generated"
     CHAPTER_BEATS_READY = "chapter_beats_ready"
@@ -58,20 +60,25 @@ class WorkflowState(StrEnum):
 
 
 class NovelForgeEngine:
+    """小说写作流程的核心编排引擎，管理故事生命周期、智能体调用、记忆系统和持久化。"""
+
     def __init__(self, config: AppConfig | None = None, bus: EventBus | None = None):
+        """初始化引擎，创建 LLM 客户端、向量/图/文本存储、各子智能体、上下文装配器等。"""
         self.config = config or load_config()
         self.bus = bus or EventBus()
         self.llm = build_llm_client(self.config.llm)
         self.vector_store = ChromaVectorStore(self.config.memory.persist_directory)
         self.graph_store = NetworkXGraphStore(self.config.memory.graph_directory)
         self.text_store = SQLiteFTSStore(self.config.memory.sqlite_path)
-        self.longform_manager = LongformManager(self.llm)
+        ranker_config = self.config.memory_ranker
+        self.longform_manager = LongformManager(self.llm, memory_ranker_config=ranker_config)
         self.context_assembler = ContextAssembler(
             self.vector_store,
             self.graph_store,
             self.text_store,
             self.config.story.max_context_tokens,
             self.longform_manager,
+            memory_ranker_config=ranker_config,
         )
         self.planner = PlannerAgent(self.llm)
         self.supervisor = SupervisorAgent(self.llm)
@@ -88,6 +95,7 @@ class NovelForgeEngine:
 
     @property
     def state_dir(self) -> Path:
+        """故事状态持久化目录路径，按需创建。"""
         path = Path("./novelforge/storage/story_state")
         path.mkdir(parents=True, exist_ok=True)
         return path
@@ -99,12 +107,14 @@ class NovelForgeEngine:
         genre: str = "novel",
         style_guide: str = "",
     ) -> Story:
+        """基于给定的前提、标题、体裁和文风指南创建并保存一个新故事。"""
         self.story = Story(title=title, premise=premise, genre=genre, style_guide=style_guide)
         self.bus.emit("story_started", {"story_id": str(self.story.id)})
         self.save_state()
         return self.story
 
     def generate_outline(self, num_chapters: int | None = None, force: bool = False) -> list:
+        """生成或补全故事大纲。若 force=True 则从零重新生成，否则只补足缺失的章节数。"""
         story = self._require_story()
         target_count = num_chapters or self.config.story.default_chapters
         if force:
@@ -118,6 +128,7 @@ class NovelForgeEngine:
         return story.outlines
 
     def generate_beats(self, chapter_index: int) -> Chapter:
+        """为指定章节生成场景节拍（scene beats），装配写作上下文后调用 Planner 代理。"""
         story = self._require_story()
         outline = story.get_outline(chapter_index)
         context = self.context_assembler.assemble_writing_context(chapter_index, story)
@@ -133,6 +144,7 @@ class NovelForgeEngine:
         return chapter
 
     def write_chapter(self, chapter_index: int) -> Chapter:
+        """撰写指定章节的草稿。若尚未生成节拍则先调用 generate_beats，然后调用 Writer 代理写作，必要时润色。"""
         story = self._require_story()
         outline = story.get_outline(chapter_index)
         chapter = story.chapters.get(chapter_index)
@@ -152,6 +164,7 @@ class NovelForgeEngine:
         return chapter
 
     def _polish_draft_if_enabled(self, story: Story, chapter_index: int, content: str) -> str:
+        """若配置启用了自动润色，用 Editor 代理对草稿进行小说质感提升后返回；否则直接返回原文。"""
         if not self.config.story.auto_polish_drafts:
             return content
         outline = story.get_outline(chapter_index)
@@ -167,6 +180,7 @@ class NovelForgeEngine:
         return polished or content
 
     def request_review(self, chapter_index: int) -> ReviewReport:
+        """对指定章节执行评审：从向量存储召回记忆、获取长篇上下文，调用 Critic 代理生成评审报告。"""
         story = self._require_story()
         outline = story.get_outline(chapter_index)
         chapter = story.chapters.get(chapter_index)
@@ -195,6 +209,7 @@ class NovelForgeEngine:
         return report
 
     def audit_chapter_continuity(self, chapter_index: int) -> ContinuityAuditReport:
+        """对指定章节进行连续性审计，检查长篇小说的一致性，返回风险评分和审计报告。"""
         story = self._require_story()
         chapter = story.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
@@ -222,6 +237,7 @@ class NovelForgeEngine:
         return report
 
     def apply_revision(self, chapter_index: int, revised_content: str | None = None) -> Chapter:
+        """对指定章节应用修订：若未提供 revised_content 则用 Editor 代理基于评审报告自动修订。"""
         story = self._require_story()
         chapter = story.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
@@ -243,6 +259,7 @@ class NovelForgeEngine:
         title: str | None = None,
         status: str = "draft",
     ) -> Chapter:
+        """手动更新章节内容、标题和状态，触发记忆处理后持久化。"""
         story = self._require_story()
         outline = None
         try:
@@ -266,15 +283,35 @@ class NovelForgeEngine:
         return chapter
 
     def auto_write_chapter(self, chapter_index: int) -> AutoRevisionReport:
+        """对指定章节启动自动写作→评审→修订循环（AutoRevisor），直至通过质量阈值或达到最大轮次。
+
+        在启动 AutoRevisor 之前先运行连续性审计，将审计发现的问题注入修订循环，
+        确保连续性问题和质量问题是同一条修复路径。
+        """
         story = self._require_story()
         outline = story.get_outline(chapter_index)
         chapter = story.chapters.get(chapter_index)
         if chapter is None or not chapter.beats:
             chapter = self.generate_beats(chapter_index)
 
+        # Run continuity audit BEFORE the revision loop so findings can be fixed
+        continuity_issues = []
+        if chapter.content:
+            try:
+                audit_report = self.audit_chapter_continuity(chapter_index)
+                continuity_issues = [
+                    {"dimension": issue.dimension, "severity": issue.severity,
+                     "description": issue.description, "evidence": issue.evidence,
+                     "suggestion": issue.suggestion}
+                    for issue in audit_report.issues
+                ]
+            except Exception:
+                pass  # continuity audit is advisory; failure doesn't block writing
+
         config = AutoRevisorConfig(
             max_rounds=self.config.auto_revisor.max_rounds,
             pass_threshold=self.config.auto_revisor.pass_threshold,
+            score_samples=self.config.auto_revisor.score_samples,
             quality_weights=self.config.auto_revisor.quality_weights,
         )
         self.current_auto_revisor = AutoRevisor(
@@ -287,7 +324,7 @@ class NovelForgeEngine:
         )
         self.auto_status = "running"
         self.bus.emit("auto_revision_started", {"story_id": str(story.id), "chapter": chapter_index})
-        result = self.current_auto_revisor.run(chapter_index)
+        result = self.current_auto_revisor.run(chapter_index, continuity_issues=continuity_issues or None)
 
         chapter = story.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
         chapter.update_content(
@@ -321,6 +358,7 @@ class NovelForgeEngine:
         use_auto_revision: bool = True,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> BatchWriteReport:
+        """批量写作指定范围章节，支持自动修订模式，通过 progress_callback 返回实时进度。"""
         if start_chapter < 1 or end_chapter < start_chapter:
             raise WorkflowError("Invalid chapter range.")
         story = self._require_story()
@@ -449,6 +487,7 @@ class NovelForgeEngine:
         use_auto_revision: bool = True,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> AutonomousRunReport:
+        """由主管智能体（Supervisor）规划并执行自主写作任务，包含多个子任务（大纲、节拍、写作、审计等）。"""
         if start_chapter < 1 or end_chapter < start_chapter:
             raise WorkflowError("Invalid chapter range.")
         story = self._require_story()
@@ -542,6 +581,7 @@ class NovelForgeEngine:
         return run
 
     def run_director_agent(self, user_message: str, max_steps: int = 6) -> AgentTraceRun:
+        """运行导演智能体（NovelDirector），根据用户指令调用已注册的工具完成多步操作。"""
         story = self._require_story()
         registry = ToolRegistry(self)
         run = self.director.run(
@@ -566,15 +606,18 @@ class NovelForgeEngine:
         return run
 
     def list_director_runs(self) -> list[AgentTraceRun]:
+        """列出当前故事的所有导演智能体运行记录。"""
         return list(self._require_story().agent_trace_runs)
 
     def get_director_run(self, run_id: str) -> AgentTraceRun | None:
+        """根据 run_id 获取单次导演智能体运行记录，不存在时返回 None。"""
         for run in self._require_story().agent_trace_runs:
             if run.id == run_id:
                 return run
         return None
 
     def export_director_trace_json(self, run_id: str, output_path: str | Path | None = None) -> Path:
+        """导出指定导演运行记录的轨迹 JSON 文件。"""
         run = self.get_director_run(run_id)
         if run is None:
             raise WorkflowError(f"Director trace run not found: {run_id}")
@@ -582,6 +625,7 @@ class NovelForgeEngine:
         return write_trace_json(run, output)
 
     def export_director_debug_report(self, run_id: str, output_path: str | Path | None = None) -> Path:
+        """导出指定导演运行记录的调试 Markdown 报告。"""
         run = self.get_director_run(run_id)
         if run is None:
             raise WorkflowError(f"Director trace run not found: {run_id}")
@@ -589,6 +633,7 @@ class NovelForgeEngine:
         return write_debug_report(run, output)
 
     def _execute_agent_task(self, task, end_chapter: int) -> str:
+        """根据任务对象中的 action 字段执行对应的引擎操作（大纲、节拍、写作、审计、记忆等），返回结果摘要。"""
         story = self._require_story()
         if task.action == "ensure_outline":
             before = len(story.outlines)
@@ -631,6 +676,7 @@ class NovelForgeEngine:
         chapter_index: int | None = None,
         task_id: str | None = None,
     ) -> None:
+        """向进度回调发送智能体任务的当前状态和进度信息。"""
         if progress_callback is None:
             return
         progress_callback(
@@ -650,6 +696,7 @@ class NovelForgeEngine:
         )
 
     def get_auto_status(self) -> dict[str, object]:
+        """返回当前自动修订器的运行状态、轮次和停止请求标志。"""
         if self.current_auto_revisor is None:
             return {"status": self.auto_status, "round": 0, "stop_requested": False}
         return {
@@ -659,6 +706,7 @@ class NovelForgeEngine:
         }
 
     def stop_auto_revision(self) -> bool:
+        """请求停止当前正在运行的自动修订循环，返回是否成功发送停止信号。"""
         if self.current_auto_revisor is None:
             return False
         self.current_auto_revisor.request_stop()
@@ -666,6 +714,7 @@ class NovelForgeEngine:
         return True
 
     def finalize_chapter(self, chapter_index: int) -> Chapter:
+        """将章节标记为终稿状态，触发记忆处理，若为最后一章则标记整个故事已完成。"""
         story = self._require_story()
         chapter = story.chapters[chapter_index]
         chapter.status = "finalized"
@@ -680,6 +729,7 @@ class NovelForgeEngine:
         return chapter
 
     def advance_to_next_chapter(self) -> Chapter:
+        """推进到下一章并生成节拍；若已是最后一章则标记故事完成并抛出异常。"""
         story = self._require_story()
         next_index = max(story.current_chapter + 1, 1)
         if next_index > len(story.outlines):
@@ -689,6 +739,7 @@ class NovelForgeEngine:
         return self.generate_beats(next_index)
 
     def _ensure_outlines(self, end_chapter: int) -> None:
+        """确保目纲至少覆盖到 end_chapter，不足则补生成并更新状态。"""
         story = self._require_story()
         self._append_missing_outlines(story, end_chapter)
         story.status = WorkflowState.OUTLINE_GENERATED.value
@@ -696,6 +747,7 @@ class NovelForgeEngine:
         self.save_state()
 
     def _append_missing_outlines(self, story: Story, target_count: int) -> None:
+        """若现有大纲数量不足 target_count，补生成缺失的章节并追加到故事大纲列表中。"""
         existing_count = len(story.outlines)
         if existing_count >= target_count:
             return
@@ -706,9 +758,11 @@ class NovelForgeEngine:
             story.outlines.append(self._renumber_outline(outline, real_index))
 
     def _renumber_outline(self, outline: ChapterOutline, chapter_index: int) -> ChapterOutline:
+        """重新编号大纲项，更改 chapter_index 为目标值后返回副本。"""
         return outline.model_copy(update={"chapter_index": chapter_index})
 
     def save_state(self) -> Path:
+        """将当前故事状态持久化到仓库（repository），返回保存路径。"""
         story = self._require_story()
         try:
             return self.repository.save(story)
@@ -716,6 +770,7 @@ class NovelForgeEngine:
             raise PersistenceError(f"Could not save story state: {exc}") from exc
 
     def load_state(self, story_id: str | UUID) -> Story:
+        """从仓库加载指定 story_id 的故事状态，若不存在或读取失败则抛出 PersistenceError。"""
         if not self.repository.exists(story_id):
             raise PersistenceError(f"Story state not found: {self.repository.story_path(story_id)}")
         try:
@@ -725,6 +780,7 @@ class NovelForgeEngine:
             raise PersistenceError(f"Could not load story state: {exc}") from exc
 
     def export_markdown(self, output_path: str | Path | None = None) -> Path:
+        """将当前故事的所有章节导出为单个 Markdown 文件。"""
         story = self._require_story()
         output = Path(output_path or self.state_dir / f"{self._safe_export_filename(story.title)}.md")
         lines = [f"# {story.title}", "", f"> {story.premise}", ""]
@@ -735,6 +791,7 @@ class NovelForgeEngine:
         return output
 
     def export_docx(self, output_path: str | Path | None = None) -> Path:
+        """将当前故事的所有章节导出为 .docx 格式文档，含标题页和章节正文。"""
         from docx import Document
         from docx.shared import Pt, Cm
         from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -782,10 +839,12 @@ class NovelForgeEngine:
         return output
 
     def _safe_export_filename(self, title: str, fallback: str = "untitled") -> str:
+        """清理标题中的非法文件名字符，截断至 80 字符，返回安全的导出文件名。"""
         cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", title).strip(" ._")
         return cleaned[:80] or fallback
 
     def export_auto_revision_report(self, chapter_index: int, output_path: str | Path | None = None) -> Path:
+        """导出指定章节的自动修订报告到文件，若不存在则抛出 WorkflowError。"""
         story = self._require_story()
         report = story.auto_revision_reports.get(chapter_index)
         if report is None:
@@ -793,6 +852,7 @@ class NovelForgeEngine:
         return self.repository.export_auto_revision_report(story, report, output_path)
 
     def delete_story_data(self, story_id: str | UUID) -> dict[str, object]:
+        """删除指定故事的所有数据：仓库文件、向量索引、全文索引和图节点。"""
         story_id_str = str(story_id)
         result = {
             "story_id": story_id_str,
@@ -806,6 +866,7 @@ class NovelForgeEngine:
         return result
 
     def _index_chapter(self, story: Story, chapter: Chapter) -> None:
+        """将章节内容写入全文索引和向量存储用于后续语义检索。"""
         doc_id = f"{story.id}:chapter:{chapter.index}:v{chapter.version}"
         self.text_store.index_document(doc_id, chapter.content)
         self.vector_store.add(
@@ -816,6 +877,7 @@ class NovelForgeEngine:
         )
 
     def _process_chapter_memory(self, story: Story, chapter: Chapter) -> None:
+        """处理章节记忆：索引内容、调用长篇管理器提取角色/世界观，写入向量/图存储并审计连续性。"""
         self._index_chapter(story, chapter)
         result = self.longform_manager.process_new_chapter(story, chapter.index, chapter.content)
         extraction = result.get("extraction") if isinstance(result, dict) else None
@@ -845,6 +907,7 @@ class NovelForgeEngine:
         self._audit_processed_chapter(story, chapter)
 
     def _audit_processed_chapter(self, story: Story, chapter: Chapter) -> None:
+        """对已处理章节进行连续性审计，将报告写入故事对象的 continuity_reports 中。"""
         outline = None
         try:
             outline = story.get_outline(chapter.index)
@@ -856,6 +919,7 @@ class NovelForgeEngine:
         story.continuity_reports[chapter.index] = report
 
     def _index_extracted_memory(self, story: Story, extraction) -> None:
+        """将从章节中提取的角色、世界观和关系数据写入向量存储和图存储。"""
         characters = getattr(extraction, "characters", [])
         if characters:
             self.vector_store.add(
@@ -901,6 +965,7 @@ class NovelForgeEngine:
             )
 
     def _require_story(self) -> Story:
+        """返回当前活动故事，若未初始化则抛出 WorkflowError。"""
         if self.story is None:
             raise WorkflowError("No active story. Start or load a story first.")
         return self.story

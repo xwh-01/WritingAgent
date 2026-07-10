@@ -32,6 +32,7 @@ if workspace_static.exists():
 
 @app.get("/")
 def root() -> dict[str, str]:
+    """GET / — 返回服务基本信息，包括名称、版本和子页面入口链接。"""
     return {
         "name": "NovelForge",
         "version": __version__,
@@ -44,6 +45,7 @@ def root() -> dict[str, str]:
 
 @app.websocket("/ws/{story_id}")
 async def websocket_progress(websocket: WebSocket, story_id: str) -> None:
+    """WS /ws/{story_id} — WebSocket 进度推送端点，接受连接后返回确认消息并关闭。"""
     await websocket.accept()
     await websocket.send_json({"story_id": story_id, "message": "WebSocket progress stream reserved."})
     await websocket.close()

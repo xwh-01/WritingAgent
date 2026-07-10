@@ -8,6 +8,7 @@ from novelforge.llm.mock_client import MockLLMClient
 
 
 def build_llm_client(config: LLMConfig) -> LLMClient:
+    """根据配置中的 provider 字段创建对应的 LLM 客户端实例（deepseek 或 mock）。"""
     provider = config.provider.lower()
     if provider == "deepseek":
         from novelforge.llm.deepseek_client import DeepSeekClient

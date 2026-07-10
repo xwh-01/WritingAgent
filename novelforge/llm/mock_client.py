@@ -10,7 +10,10 @@ from novelforge.llm.base import LLMClient
 
 
 class MockLLMClient(LLMClient):
+    """基于规则与关键词的本地 Mock LLM 客户端，无需 API Key 即可用于测试和演示。"""
+
     def chat_completion(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
+        """根据提示词中的关键词返回对应的预设 JSON 或文本响应。"""
         prompt = "\n".join(message.get("content", "") for message in messages)
         if "director_decision" in prompt:
             step = self._extract_step(prompt)
@@ -137,12 +140,12 @@ class MockLLMClient(LLMClient):
                 {
                     "characters": [
                         {
-                            "id": "hero",
+                            "id": "protagonist",
                             "name": "主角",
                             "age": "unknown",
                             "appearance": "",
-                            "personality": "敏锐、在压力中成长",
-                            "motivation": "完成当前目标并保护关键线索",
+                            "personality": "在压力中成长、善于观察",
+                            "motivation": "完成当前目标并保护重要线索",
                             "weakness": "",
                             "relationships": {},
                             "secrets": [],
@@ -151,39 +154,96 @@ class MockLLMClient(LLMClient):
                     ],
                     "world_settings": [
                         {
-                            "id": "world-core-training",
-                            "category": "training",
-                            "content": "训练、比赛和关键线索会持续影响人物能力与剧情推进。",
+                            "id": "world-core-setting",
+                            "category": "world_rule",
+                            "content": "关键场景和规则会持续影响人物能力与剧情推进。",
                             "metadata": {"source": "mock_memory_extract"},
                         }
                     ],
                     "relationships": [],
-                    "continuity_constraints": ["后续章节需要保持主角目标、关键线索和训练代价的连续性。"],
+                    "continuity_constraints": ["后续章节需要保持主角目标、关键线索和世界规则的连续性。"],
                 },
                 ensure_ascii=False,
             )
         if "quality_scorecard_review" in prompt:
             improved = "【修订稿】" in prompt or "revise_chapter_quality" in prompt
-            base = 8.8 if improved else 6.4
+            # ── content-sensitive scoring ──
+            # Extract chapter content from the prompt (between "章节内容:" and "故事全局记忆:")
+            content_match = re.search(r"章节内容:\s*(.*?)(?:故事全局记忆|$)", prompt, re.DOTALL)
+            content = content_match.group(1).strip() if content_match else ""
+            content_len = len(content)
+
+            # Quality signal detection
+            dialogue_count = sum(content.count(q) for q in ("\"", "\"", "「", "」", "：", ":“"))
+            dialogue_variety = min(3.0, dialogue_count / max(content_len, 1) * 300)
+
+            conflict_keywords = ("冲突", "选择", "代价", "危险", "失败", "背叛", "秘密", "真相", "对抗", "挣扎")
+            conflict_signals = sum(1 for kw in conflict_keywords if kw in content)
+            conflict_bonus = min(2.0, conflict_signals * 0.4)
+
+            scene_transitions = content.count("\n\n") + content.count("\n\n")
+            structure_bonus = min(1.5, scene_transitions / 5.0)
+
+            quality_bonus = dialogue_variety + conflict_bonus + structure_bonus
+
+            if improved:
+                # Revised draft: base starts higher, quality bonuses still apply
+                base = round(7.5 + quality_bonus * 0.3, 2)
+                base = min(base, 9.2)
+            else:
+                # Fresh draft: base starts lower, quality bonuses apply
+                base = round(5.0 + quality_bonus * 0.5, 2)
+                base = min(base, 7.5)
+
+            # Per-dimension jitter for realistic variance
+            import random as _random
+            _r = lambda scale: round(_random.uniform(-scale, scale), 2)
+
+            scores = {
+                "logic_consistency": round(base + _r(0.4), 2),
+                "character_fidelity": round(base + 0.2 + _r(0.3), 2),
+                "foreshadowing_handling": round(base - 0.1 + _r(0.5), 2),
+                "pacing": round(base + _r(0.4), 2),
+                "style_uniformity": round(base + 0.1 + _r(0.3), 2),
+            }
+            # Clamp to 1.0-10.0
+            scores = {k: max(1.0, min(10.0, v)) for k, v in scores.items()}
+
+            # Build realistic issues list
+            issues = []
+            if conflict_signals < 3:
+                issues.append({
+                    "dimension": "逻辑",
+                    "severity": "medium",
+                    "description": "核心冲突体现不够充分，建议增强对抗或选择的戏剧张力。",
+                    "paragraph_range": "",
+                    "evidence": "",
+                })
+            if dialogue_variety < 1.0:
+                issues.append({
+                    "dimension": "节奏",
+                    "severity": "medium",
+                    "description": "对话占比偏低或对话形式单一，建议增加人物互动和潜台词。",
+                    "paragraph_range": "",
+                    "evidence": "",
+                })
+            if structure_bonus < 0.5:
+                issues.append({
+                    "dimension": "节奏",
+                    "severity": "low",
+                    "description": "场景分段偏少，可能缺乏节奏变化。",
+                    "paragraph_range": "",
+                    "evidence": "",
+                })
+            if improved:
+                # Revised drafts have fewer issues
+                issues = issues[:1] if base < 8.0 else []
+
             return json.dumps(
                 {
-                    "scores": {
-                        "logic_consistency": base,
-                        "character_fidelity": base + 0.2,
-                        "foreshadowing_handling": base - 0.1,
-                        "pacing": base,
-                        "style_uniformity": base + 0.1,
-                    },
-                    "issues": []
-                    if improved
-                    else [
-                        {
-                            "dimension": "节奏",
-                            "severity": "medium",
-                            "description": "中段转折不够明确，主角选择的代价还不够可见。",
-                        }
-                    ],
-                    "overall_comment": "质量评分卡由 Mock LLM 生成。",
+                    "scores": scores,
+                    "issues": issues,
+                    "overall_comment": f"质量评分卡由 Mock LLM 生成（内容长度 {content_len} 字，质量信号 {quality_bonus:.1f}）。",
                 },
                 ensure_ascii=False,
             )
@@ -201,10 +261,10 @@ class MockLLMClient(LLMClient):
         if "prose_polish" in prompt:
             return (
                 "【润色稿】\n"
-                "夜色压低了球场边缘的灯光，草叶上浮着一层细亮的水汽。\n\n"
-                "主角站在门线前，听见自己的呼吸被看台的空旷放大。那条刚刚到手的线索像一枚发烫的硬币，"
-                "压在掌心，也压在他的选择上。他知道退后一步会更安全，可有些真相一旦露出边角，就再也无法装作没看见。\n\n"
-                "哨声响起时，他向前踏出半步。风掠过耳侧，危险也随之逼近。"
+                "夜色压低了街角的灯光，薄雾贴着地面缓缓流动。\n\n"
+                "主角站在岔路口，听见自己的呼吸被四周的寂静放大。那条刚刚到手的线索像一枚发烫的硬币，"
+                "压在掌心，也压在选择上。他知道退后一步会更安全，可有些真相一旦露出边角，就再也无法装作没看见。\n\n"
+                "远处传来钟声。他向前踏出半步，风掠过耳侧，危险也随之逼近。"
             )
         if "润色" in prompt or "revise_chapter" in prompt:
             return "【修订稿】\n" + self._last_user_text(messages)
@@ -214,9 +274,9 @@ class MockLLMClient(LLMClient):
                 [
                     {
                         "chapter_index": i,
-                        "title": f"第{i}章 试炼的回声",
+                        "title": f"第{i}章",
                         "summary": f"主角在第{i}个关键节点面对新的阻力，并发现更深层的真相。",
-                        "conflict": "目标与代价之间的冲突逐步升级。",
+                        "conflict": "外部压力与内心选择的冲突逐步升级。",
                         "pov_character": "主角",
                     }
                     for i in range(1, num + 1)
@@ -228,13 +288,13 @@ class MockLLMClient(LLMClient):
                 [
                     {
                         "scene_index": 1,
-                        "description": "主角进入新场景，旧问题以新的形式出现。",
-                        "goal": "取得推进主线所需的线索。",
-                        "outcome": "线索到手，但暴露了更危险的对手。",
+                        "description": "主角进入新环境，旧问题以新的形式出现。",
+                        "goal": "取得推进主线所需的关键线索。",
+                        "outcome": "线索到手，但暴露了更大的风险。",
                     },
                     {
                         "scene_index": 2,
-                        "description": "主角与关键人物交锋，关系发生细微改变。",
+                        "description": "主角与关键人物交锋，关系发生微妙变化。",
                         "goal": "逼近真相并守住底线。",
                         "outcome": "胜利带来代价，章节以悬念收束。",
                     },
@@ -242,25 +302,29 @@ class MockLLMClient(LLMClient):
                 ensure_ascii=False,
             )
         return (
-            "夜色压在城墙上，风从残破的旗帜间穿过。\n\n"
-            "主角握紧手中的线索，意识到真正的敌人并不在眼前。每一步推进都像踩在薄冰上，"
-            "但退后意味着让更多人被黑暗吞没。\n\n"
-            "当钟声响起，他终于做出选择：去见那个最不该相信的人。"
+            "夜幕降临时，雾气从低洼处漫上来。\n\n"
+            "主角握紧手中的线索，意识到真正的对手并不在明处。每一步推进都像踩在薄冰上，"
+            "但退后意味着让在乎的人陷入更大的危险。\n\n"
+            "当远处的钟声响起，他终于做出选择：去见那个最不该相信的人。"
         )
 
     def _extract_int(self, text: str, default: int) -> int:
+        """从文本中提取章节数等整数，未匹配时返回默认值。"""
         match = re.search(r"(\d+)\s*(?:章|chapters|ChapterOutline)", text, re.IGNORECASE)
         return int(match.group(1)) if match else default
 
     def _extract_step(self, text: str) -> int:
+        """从 JSON 文本中解析 "step" 字段的数值，默认返回 1。"""
         match = re.search(r'"step"\s*:\s*(\d+)', text)
         return int(match.group(1)) if match else 1
 
     def _extract_chapter(self, text: str, default: int) -> int:
+        """从文本中提取章节序号，未匹配时返回默认值。"""
         match = re.search(r"(?:第)?\s*(\d+)\s*(?:章|chapter|ch)", text, re.IGNORECASE)
         return int(match.group(1)) if match else default
 
     def _last_user_text(self, messages: list[dict[str, str]]) -> str:
+        """获取对话记录中最后一条 user 角色的消息内容。"""
         for message in reversed(messages):
             if message.get("role") == "user":
                 return message.get("content", "")

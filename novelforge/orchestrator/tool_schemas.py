@@ -6,22 +6,26 @@ from pydantic import BaseModel, Field
 
 
 class EmptyArgs(BaseModel):
-    pass
+    """空参数模型，用于无参数工具（如 show_status）。"""
 
 
 class CreateOutlineArgs(BaseModel):
+    """创建大纲的参数模型，可选章节数量（>=1）。"""
     num_chapters: int | None = Field(default=None, ge=1)
 
 
 class ChapterIndexArgs(BaseModel):
+    """单章节索引参数模型，要求 chapter_index >= 1。"""
     chapter_index: int = Field(ge=1)
 
 
 class ReviseChapterArgs(ChapterIndexArgs):
+    """revise_chapter 工具的参数模型，继承 ChapterIndexArgs 并增加可选的手动替换内容。"""
     revised_content: str | None = None
 
 
 class ListForeshadowingsArgs(BaseModel):
+    """list_foreshadowings 工具的参数模型，可按 status 字段筛选。"""
     status: str | None = None
 
 

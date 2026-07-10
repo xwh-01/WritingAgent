@@ -15,4 +15,5 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 @router.get("/", response_class=HTMLResponse)
 async def workspace_page(request: Request, story_id: str = Query(default="")):
+    """GET /workspace/ — 返回交互式写作工作区的 HTML 页面。"""
     return templates.TemplateResponse(request, "workspace.html", {"story_id": story_id})

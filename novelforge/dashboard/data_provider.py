@@ -10,6 +10,8 @@ from novelforge.core.models import Chapter, Story
 
 @dataclass
 class DashboardData:
+    """仪表盘汇总数据容器，包含伏笔、角色时间线、节奏热力图等可视化数据。"""
+
     foreshadowings: list[dict[str, Any]]
     character_timeline: dict[str, list[dict[str, Any]]]
     pacing_heatmap: list[dict[str, Any]]
@@ -19,10 +21,13 @@ class DashboardData:
 
 
 class DashboardDataProvider:
+    """从 Story 实例中提取并整理所有仪表盘可视化所需数据。"""
+
     def __init__(self, story: Story):
         self.story = story
 
     def get_all_data(self) -> DashboardData:
+        """汇集所有仪表盘数据并返回统一的 DashboardData 对象。"""
         return DashboardData(
             foreshadowings=self._prepare_foreshadowings(),
             character_timeline=self._prepare_character_timeline(),
@@ -33,6 +38,7 @@ class DashboardDataProvider:
         )
 
     def _prepare_foreshadowings(self) -> list[dict[str, Any]]:
+        """整理伏笔列表，标记过期（overdue）状态的伏笔。"""
         results: list[dict[str, Any]] = []
         current_chapter = self.story.current_chapter
         for item in self.story.foreshadowings:
@@ -52,6 +58,7 @@ class DashboardDataProvider:
         return results
 
     def _prepare_character_timeline(self) -> dict[str, list[dict[str, Any]]]:
+        """构建角色状态时间线，以角色名为键，按章节排列状态快照。"""
         timeline: dict[str, list[dict[str, Any]]] = {}
         for character_id, states in self.story.character_states.items():
             character = self.story.characters.get(character_id)
@@ -69,6 +76,7 @@ class DashboardDataProvider:
         return timeline
 
     def _prepare_pacing_heatmap(self) -> list[dict[str, Any]]:
+        """生成章节节奏热力图数据，包含冲突强度、对话/动作比例等指标。"""
         heatmap: list[dict[str, Any]] = []
         for index, chapter in sorted(self.story.chapters.items()):
             summary = self.story.chapter_summaries.get(index)
@@ -91,6 +99,7 @@ class DashboardDataProvider:
         return heatmap
 
     def _estimate_conflict(self, chapter: Chapter) -> int:
+        """根据章节正文和纲要中的关键词估算冲突强度（1-10 分）。"""
         outline = next((item for item in self.story.outlines if item.chapter_index == chapter.index), None)
         high_keywords = ("战斗", "死亡", "背叛", "揭露", "决裂", "危机", "毁灭", "失败", "受伤")
         medium_keywords = ("争吵", "威胁", "秘密", "逃离", "对决", "真相", "选择", "冲突")
@@ -101,6 +110,7 @@ class DashboardDataProvider:
         return max(1, min(score, 10))
 
     def _prepare_causality_graph(self) -> dict[str, list[dict[str, Any]]]:
+        """构建因果事件图，生成节点列表和因果关系边列表。"""
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
         known_ids = set()
@@ -125,6 +135,7 @@ class DashboardDataProvider:
         return {"nodes": nodes, "edges": list(unique_edges.values())}
 
     def _prepare_quality_trend(self) -> list[dict[str, Any]]:
+        """聚合自动修订报告和连续性审计的评分趋势数据。"""
         trend: list[dict[str, Any]] = []
         for chapter_index, report in sorted(self.story.auto_revision_reports.items()):
             for round_report in report.rounds:
@@ -172,6 +183,7 @@ class DashboardDataProvider:
         return trend
 
     def _prepare_story_overview(self) -> dict[str, Any]:
+        """计算故事概览统计数据，包括完成率、角色数、伏笔状态等。"""
         completed = [chapter for chapter in self.story.chapters.values() if chapter.status in {"finalized", "published"}]
         revised = [chapter for chapter in self.story.chapters.values() if chapter.status == "revised"]
         pending_foreshadowings = [item for item in self._prepare_foreshadowings() if item["status"] == "pending"]
@@ -198,6 +210,7 @@ class DashboardDataProvider:
         }
 
     def _estimate_dialogue_ratio(self, content: str) -> float:
+        """估算正文中的对话比例（0-100），基于引号行和冒号行占比。"""
         if not content:
             return 0.0
         lines = [line.strip() for line in content.splitlines() if line.strip()]
@@ -208,6 +221,7 @@ class DashboardDataProvider:
         return round(min(100.0, (dialogue_lines / len(lines) + quote_density) * 100), 1)
 
     def _estimate_action_ratio(self, content: str) -> float:
+        """估算正文中的动作描写比例（0-100），基于动作关键词命中率。"""
         if not content:
             return 0.0
         action_words = ("冲", "跑", "扑", "射", "挡", "击", "推", "摔", "喊", "抢", "扑救", "追", "逃")

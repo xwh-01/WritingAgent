@@ -9,7 +9,10 @@ from novelforge.memory.interfaces import IFTSStore
 
 
 class SQLiteFTSStore(IFTSStore):
+    """基于 SQLite FTS5 的全文检索引擎，FTS 不可用时自动降级为 LIKE 查询。"""
+
     def __init__(self, sqlite_path: str):
+        """创建 SQLite 连接并初始化全文检索表结构。"""
         self.path = Path(sqlite_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(self.path, check_same_thread=False)
@@ -17,6 +20,7 @@ class SQLiteFTSStore(IFTSStore):
         self._init_schema()
 
     def index_document(self, doc_id: str, content: str) -> None:
+        """索引一篇文档到 FTS 表和主文档表（insert or replace）。"""
         with self.connection:
             self.connection.execute(
                 "INSERT OR REPLACE INTO documents(doc_id, content) VALUES (?, ?)",
@@ -30,6 +34,7 @@ class SQLiteFTSStore(IFTSStore):
                 )
 
     def search(self, query: str, limit: int = 10, story_id: str | None = None) -> list[str]:
+        """全文搜索，优先使用 FTS MATCH，降级为 LIKE，支持按 story_id 过滤。"""
         if not query.strip():
             return []
         prefix = f"{story_id}:%" if story_id is not None else None
@@ -64,6 +69,7 @@ class SQLiteFTSStore(IFTSStore):
         return [row[0] for row in rows]
 
     def delete_story(self, story_id: str) -> int:
+        """删除指定故事的所有索引文档，返回被删文档数。"""
         prefix = f"{story_id}:%"
         with self.connection:
             doc_ids = [
@@ -80,6 +86,7 @@ class SQLiteFTSStore(IFTSStore):
         return len(doc_ids)
 
     def _init_schema(self) -> None:
+        """初始化文档主表和 FTS5 虚拟表，FTS 创建失败则标记为不可用。"""
         with self.connection:
             self.connection.execute(
                 "CREATE TABLE IF NOT EXISTS documents("

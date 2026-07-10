@@ -10,6 +10,8 @@ from novelforge.core.models import AgentTask, AutonomousRunReport, Story
 
 
 class SupervisorAgent(BaseAgent):
+    """监管 Agent，将写作目标转化为可执行的任务计划。"""
+
     name = "supervisor"
     allowed_actions = {
         "ensure_outline",
@@ -28,6 +30,7 @@ class SupervisorAgent(BaseAgent):
         end_chapter: int,
         use_auto_revision: bool = True,
     ) -> AutonomousRunReport:
+        """规划写作运行：优先用 LLM 生成任务计划，失败则用规则生成。"""
         llm_plan = self._plan_with_llm(story, objective, start_chapter, end_chapter, use_auto_revision)
         if llm_plan is not None:
             return llm_plan
@@ -41,6 +44,7 @@ class SupervisorAgent(BaseAgent):
         end_chapter: int,
         use_auto_revision: bool,
     ) -> AutonomousRunReport | None:
+        """调用 LLM 生成任务计划并校验，失败返回 None 以触发规则回退。"""
         system = (
             "You are the SupervisorAgent for a long-form fiction writing system. "
             "Plan an executable tool sequence for a multi-agent novel writing run. "
@@ -114,6 +118,7 @@ class SupervisorAgent(BaseAgent):
         end_chapter: int,
         use_auto_revision: bool,
     ) -> list[AgentTask]:
+        """校验 LLM 返回的任务列表：过滤非法动作、去重，再补全最低保障计划。"""
         if not isinstance(data, dict):
             return []
         raw_tasks = data.get("tasks")
@@ -163,6 +168,7 @@ class SupervisorAgent(BaseAgent):
         end_chapter: int,
         use_auto_revision: bool = True,
     ) -> AutonomousRunReport:
+        """基于规则的确定性任务计划：按章节顺序生成大纲 → 节拍 → 写作 → 审计 → 记忆检查点。"""
         tasks: list[AgentTask] = []
 
         def add(
@@ -246,6 +252,7 @@ class SupervisorAgent(BaseAgent):
         end_chapter: int,
         use_auto_revision: bool,
     ) -> list[AgentTask]:
+        """确保任务计划包含每个章节的最低必要步骤（大纲、节拍、写作、审计、记忆）。"""
         if not any(task.action == "ensure_outline" for task in tasks):
             tasks.insert(
                 0,
@@ -290,6 +297,7 @@ class SupervisorAgent(BaseAgent):
         return tasks
 
     def _agent_for_action(self, action: str) -> str:
+        """将动作名称映射到对应的 Agent 名称。"""
         return {
             "ensure_outline": "PlannerAgent",
             "generate_beats": "PlannerAgent",

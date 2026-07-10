@@ -21,6 +21,7 @@ templates = Jinja2Templates(directory=str(templates_dir))
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request, story_id: str = Query(default="")):
+    """GET /dashboard/ — 返回故事全景仪表盘的 HTML 页面。"""
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -32,6 +33,7 @@ async def dashboard_page(request: Request, story_id: str = Query(default="")):
 
 @router.get("/data/{story_id}")
 async def get_dashboard_data(story_id: str):
+    """GET /dashboard/data/{story_id} — 返回指定故事的仪表盘汇总数据（JSON）。"""
     try:
         engine = get_engine(story_id)
     except Exception as exc:
@@ -42,4 +44,5 @@ async def get_dashboard_data(story_id: str):
 
 @router.get("/stories")
 async def list_story_states():
+    """GET /dashboard/stories — 列出所有已保存故事的记录摘要。"""
     return {"stories": [record.__dict__ for record in StoryRepository().list_records()]}
