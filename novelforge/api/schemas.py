@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from novelforge.core.models import Chapter, ChapterOutline, ReviewReport, Story
+from novelforge.core.models import CharacterFact, Chapter, ChapterContract, ChapterOutline, ReviewReport, Story
 
 
 class CreateStoryRequest(BaseModel):
@@ -63,6 +63,18 @@ class ChapterContentRequest(BaseModel):
     title: str | None = None
     content: str
     status: str = "draft"
+
+
+class ChapterContractRequest(ChapterContract):
+    """创建或更新章节合同的请求体。"""
+
+    pass
+
+
+class CharacterFactRequest(CharacterFact):
+    """新增或覆盖用户确认人物事实的请求体。"""
+
+    pass
 
 
 class StoryResponse(BaseModel):

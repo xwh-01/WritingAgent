@@ -28,6 +28,8 @@ from novelforge.core.models import (
     BatchChapterResult,
     BatchWriteReport,
     Chapter,
+    ChapterContract,
+    CharacterFact,
     ChapterOutline,
     ContinuityAuditReport,
     ReviewReport,
@@ -40,10 +42,10 @@ from novelforge.memory.graph_store import NetworkXGraphStore
 from novelforge.memory.text_store import SQLiteFTSStore
 from novelforge.memory.vector_store import ChromaVectorStore
 from novelforge.orchestrator.auto_revisor import AutoRevisor, AutoRevisorConfig
-from novelforge.orchestrator.bus import EventBus
 from novelforge.orchestrator.trace_exporter import write_debug_report, write_trace_json
 from novelforge.orchestrator.tool_registry import ToolRegistry
 from novelforge.storage.repository import StoryRepository
+from novelforge.validation import ChapterContractValidator
 
 
 class WorkflowState(StrEnum):
@@ -62,10 +64,9 @@ class WorkflowState(StrEnum):
 class NovelForgeEngine:
     """小说写作流程的核心编排引擎，管理故事生命周期、智能体调用、记忆系统和持久化。"""
 
-    def __init__(self, config: AppConfig | None = None, bus: EventBus | None = None):
+    def __init__(self, config: AppConfig | None = None):
         """初始化引擎，创建 LLM 客户端、向量/图/文本存储、各子智能体、上下文装配器等。"""
         self.config = config or load_config()
-        self.bus = bus or EventBus()
         self.llm = build_llm_client(self.config.llm)
         self.vector_store = ChromaVectorStore(self.config.memory.persist_directory)
         self.graph_store = NetworkXGraphStore(self.config.memory.graph_directory)
@@ -109,7 +110,6 @@ class NovelForgeEngine:
     ) -> Story:
         """基于给定的前提、标题、体裁和文风指南创建并保存一个新故事。"""
         self.story = Story(title=title, premise=premise, genre=genre, style_guide=style_guide)
-        self.bus.emit("story_started", {"story_id": str(self.story.id)})
         self.save_state()
         return self.story
 
@@ -124,13 +124,13 @@ class NovelForgeEngine:
         story.status = WorkflowState.OUTLINE_GENERATED.value
         story.touch()
         self.save_state()
-        self.bus.emit("outline_generated", {"story_id": str(story.id), "chapters": len(story.outlines)})
         return story.outlines
 
     def generate_beats(self, chapter_index: int) -> Chapter:
         """为指定章节生成场景节拍（scene beats），装配写作上下文后调用 Planner 代理。"""
         story = self._require_story()
         outline = story.get_outline(chapter_index)
+        self.ensure_chapter_contract(chapter_index)
         context = self.context_assembler.assemble_writing_context(chapter_index, story)
         beats = self.planner.generate_beats(outline, context)
         chapter = story.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
@@ -140,7 +140,6 @@ class NovelForgeEngine:
         story.status = WorkflowState.CHAPTER_BEATS_READY.value
         story.touch()
         self.save_state()
-        self.bus.emit("beats_generated", {"story_id": str(story.id), "chapter": chapter_index})
         return chapter
 
     def write_chapter(self, chapter_index: int) -> Chapter:
@@ -151,7 +150,10 @@ class NovelForgeEngine:
         if chapter is None or not chapter.beats:
             chapter = self.generate_beats(chapter_index)
         context = self.context_assembler.assemble_writing_context(chapter_index, story)
-        content = self.writer.write_chapter(chapter_index, outline, chapter.beats, context, story.style_guide)
+        contract = self.ensure_chapter_contract(chapter_index)
+        content = self.writer.write_chapter(
+            chapter_index, outline, chapter.beats, context, story.style_guide, contract=contract
+        )
         content = self._polish_draft_if_enabled(story, chapter_index, content)
         chapter.update_content(content, status="draft", summary=outline.summary)
         story.chapters[chapter_index] = chapter
@@ -160,14 +162,61 @@ class NovelForgeEngine:
         self._process_chapter_memory(story, chapter)
         story.touch()
         self.save_state()
-        self.bus.emit("chapter_written", {"story_id": str(story.id), "chapter": chapter_index})
         return chapter
+
+    def ensure_chapter_contract(self, chapter_index: int, force: bool = False) -> ChapterContract:
+        """返回章节合同；缺失时从大纲生成，force=True 时重新生成。"""
+        story = self._require_story()
+        existing = story.chapter_contracts.get(chapter_index)
+        if existing is not None and not force:
+            return existing
+        outline = story.get_outline(chapter_index)
+        contract = self.planner.generate_chapter_contract(story, outline)
+        story.chapter_contracts[chapter_index] = contract
+        story.touch()
+        self.save_state()
+        return contract
+
+    def update_chapter_contract(self, chapter_index: int, contract: ChapterContract) -> ChapterContract:
+        """保存用户确认或编辑后的章节合同。"""
+        story = self._require_story()
+        story.get_outline(chapter_index)
+        contract.chapter_index = chapter_index
+        story.chapter_contracts[chapter_index] = contract
+        story.touch()
+        self.save_state()
+        return contract
+
+    def list_character_facts(self, chapter_index: int | None = None) -> list[CharacterFact]:
+        """列出全部事实，或列出指定章节生效的事实。"""
+        story = self._require_story()
+        if chapter_index is None:
+            return list(story.character_facts)
+        return self.longform_manager.fact_ledger.facts_at(story, chapter_index)
+
+    def upsert_character_fact(self, fact: CharacterFact) -> CharacterFact:
+        """保存用户确认的人物事实并持久化。"""
+        story = self._require_story()
+        saved = self.longform_manager.fact_ledger.upsert_confirmed(story, fact)
+        story.touch()
+        self.save_state()
+        return saved
+
+    def delete_character_fact(self, fact_id: str) -> bool:
+        """删除一条用户确认事实；系统提取事实不可直接删除。"""
+        story = self._require_story()
+        deleted = self.longform_manager.fact_ledger.delete_confirmed(story, fact_id)
+        if deleted:
+            story.touch()
+            self.save_state()
+        return deleted
 
     def _polish_draft_if_enabled(self, story: Story, chapter_index: int, content: str) -> str:
         """若配置启用了自动润色，用 Editor 代理对草稿进行小说质感提升后返回；否则直接返回原文。"""
         if not self.config.story.auto_polish_drafts:
             return content
         outline = story.get_outline(chapter_index)
+        self.ensure_chapter_contract(chapter_index)
         instructions = (
             f"目标字数约 {self.config.story.prose_target_words} 字；"
             "把草稿改成更有小说质感的完整正文。"
@@ -186,8 +235,12 @@ class NovelForgeEngine:
         chapter = story.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
             raise WorkflowError(f"Chapter {chapter_index} has no draft to review.")
-        memories = self.vector_store.query("plot_summaries", outline.summary, k=5, story_id=str(story.id))
-        memories.extend(self.vector_store.query("memory_cards", outline.summary, k=5, story_id=str(story.id)))
+        memories = self.vector_store.query(
+            "plot_summaries", outline.summary, k=5, story_id=str(story.id), max_chapter=chapter_index
+        )
+        memories.extend(self.vector_store.query(
+            "memory_cards", outline.summary, k=5, story_id=str(story.id), max_chapter=chapter_index
+        ))
         longform_context = self.longform_manager.get_enhanced_context(chapter_index, story, query=outline.summary)
         report = self.critic.review_chapter(
             chapter.content,
@@ -205,8 +258,17 @@ class NovelForgeEngine:
         story.status = WorkflowState.REVIEWING.value
         story.touch()
         self.save_state()
-        self.bus.emit("chapter_reviewed", {"story_id": str(story.id), "chapter": chapter_index})
         return report
+
+    def validate_chapter_contract(self, chapter_index: int) -> list:
+        """对章节合同执行规则与语义联合验收，返回逐项证据。"""
+        story = self._require_story()
+        chapter = story.chapters.get(chapter_index)
+        if chapter is None or not chapter.content:
+            raise WorkflowError(f"Chapter {chapter_index} has no content to validate.")
+        contract = self.ensure_chapter_contract(chapter_index)
+        validator = ChapterContractValidator(self.llm)
+        return validator.validate(chapter.content, contract)
 
     def audit_chapter_continuity(self, chapter_index: int) -> ContinuityAuditReport:
         """对指定章节进行连续性审计，检查长篇小说的一致性，返回风险评分和审计报告。"""
@@ -225,15 +287,6 @@ class NovelForgeEngine:
         story.continuity_reports[chapter_index] = report
         story.touch()
         self.save_state()
-        self.bus.emit(
-            "chapter_continuity_audited",
-            {
-                "story_id": str(story.id),
-                "chapter": chapter_index,
-                "risk_score": report.risk_score,
-                "passed": report.passed,
-            },
-        )
         return report
 
     def apply_revision(self, chapter_index: int, revised_content: str | None = None) -> Chapter:
@@ -249,7 +302,6 @@ class NovelForgeEngine:
         story.touch()
         self._process_chapter_memory(story, chapter)
         self.save_state()
-        self.bus.emit("chapter_revised", {"story_id": str(story.id), "chapter": chapter_index})
         return chapter
 
     def update_chapter_content(
@@ -279,7 +331,6 @@ class NovelForgeEngine:
         self._process_chapter_memory(story, chapter)
         story.touch()
         self.save_state()
-        self.bus.emit("chapter_updated", {"story_id": str(story.id), "chapter": chapter_index})
         return chapter
 
     def auto_write_chapter(self, chapter_index: int) -> AutoRevisionReport:
@@ -290,6 +341,7 @@ class NovelForgeEngine:
         """
         story = self._require_story()
         outline = story.get_outline(chapter_index)
+        self.ensure_chapter_contract(chapter_index)
         chapter = story.chapters.get(chapter_index)
         if chapter is None or not chapter.beats:
             chapter = self.generate_beats(chapter_index)
@@ -323,7 +375,6 @@ class NovelForgeEngine:
             config=config,
         )
         self.auto_status = "running"
-        self.bus.emit("auto_revision_started", {"story_id": str(story.id), "chapter": chapter_index})
         result = self.current_auto_revisor.run(chapter_index, continuity_issues=continuity_issues or None)
 
         chapter = story.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
@@ -340,15 +391,6 @@ class NovelForgeEngine:
         story.touch()
         self.save_state()
         self.auto_status = self.current_auto_revisor.status
-        self.bus.emit(
-            "auto_revision_finished",
-            {
-                "story_id": str(story.id),
-                "chapter": chapter_index,
-                "passed": result.passed,
-                "final_score": result.final_score,
-            },
-        )
         return result
 
     def batch_write_chapters(
@@ -467,16 +509,6 @@ class NovelForgeEngine:
         story.batch_reports.append(report)
         story.touch()
         self.save_state()
-        self.bus.emit(
-            "batch_write_finished",
-            {
-                "story_id": str(story.id),
-                "start": start_chapter,
-                "end": end_chapter,
-                "completed": report.completed,
-                "failed": report.failed,
-            },
-        )
         return report
 
     def agentic_writing_run(
@@ -487,7 +519,13 @@ class NovelForgeEngine:
         use_auto_revision: bool = True,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> AutonomousRunReport:
-        """由主管智能体（Supervisor）规划并执行自主写作任务，包含多个子任务（大纲、节拍、写作、审计等）。"""
+        """已弃用：保留兼容旧调用；新产品流程使用章节合同和批量写作。"""
+        import warnings
+        warnings.warn(
+            "agentic_writing_run is deprecated; use chapter contracts with batch_write_chapters",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if start_chapter < 1 or end_chapter < start_chapter:
             raise WorkflowError("Invalid chapter range.")
         story = self._require_story()
@@ -568,16 +606,6 @@ class NovelForgeEngine:
         run.updated_at = utc_now()
         story.touch()
         self.save_state()
-        self.bus.emit(
-            "agentic_run_finished",
-            {
-                "story_id": str(story.id),
-                "run_id": run.id,
-                "status": run.status,
-                "completed_tasks": run.completed_tasks,
-                "failed_tasks": run.failed_tasks,
-            },
-        )
         return run
 
     def run_director_agent(self, user_message: str, max_steps: int = 6) -> AgentTraceRun:
@@ -594,15 +622,6 @@ class NovelForgeEngine:
         story.agent_trace_runs.append(run)
         story.touch()
         self.save_state()
-        self.bus.emit(
-            "director_run_finished",
-            {
-                "story_id": str(story.id),
-                "run_id": run.id,
-                "status": run.status,
-                "steps": len(run.steps),
-            },
-        )
         return run
 
     def list_director_runs(self) -> list[AgentTraceRun]:
@@ -725,7 +744,6 @@ class NovelForgeEngine:
             self._process_chapter_memory(story, chapter)
         story.touch()
         self.save_state()
-        self.bus.emit("chapter_finalized", {"story_id": str(story.id), "chapter": chapter_index})
         return chapter
 
     def advance_to_next_chapter(self) -> Chapter:
@@ -867,7 +885,10 @@ class NovelForgeEngine:
 
     def _index_chapter(self, story: Story, chapter: Chapter) -> None:
         """将章节内容写入全文索引和向量存储用于后续语义检索。"""
-        doc_id = f"{story.id}:chapter:{chapter.index}:v{chapter.version}"
+        prefix = f"{story.id}:chapter:{chapter.index}:"
+        self.text_store.delete_prefix(prefix)
+        self.vector_store.delete_prefix("plot_summaries", prefix)
+        doc_id = f"{prefix}current"
         self.text_store.index_document(doc_id, chapter.content)
         self.vector_store.add(
             "plot_summaries",

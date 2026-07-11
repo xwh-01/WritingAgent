@@ -127,6 +127,20 @@ class StoryRepository:
                 for issue in round_report.review_report.issues:
                     lines.append(f"- `{issue.severity}` {issue.dimension}: {issue.description}")
                 lines.append("")
+            if round_report.review_report.contract_checks:
+                lines.append("Contract Checks:")
+                for check in round_report.review_report.contract_checks:
+                    confidence = f" confidence={check.confidence:.0%}" if check.validation_method == "rule+llm" else ""
+                    location = f" {check.paragraph_range}" if check.paragraph_range else ""
+                    lines.append(
+                        f"- **{check.status}** `{check.constraint_type}`: {check.requirement}"
+                        f"{confidence}{location}"
+                    )
+                    if check.evidence:
+                        lines.append(f"  - Evidence: {check.evidence[:300]}")
+                    if check.message:
+                        lines.append(f"  - Note: {check.message}")
+                lines.append("")
         lines.extend(["## Residual Issues", ""])
         if report.residual_issues:
             for issue in report.residual_issues:

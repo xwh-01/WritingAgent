@@ -165,6 +165,39 @@ class MockLLMClient(LLMClient):
                 },
                 ensure_ascii=False,
             )
+        if "chapter_contract_semantic_validation" in prompt:
+            requirements_match = re.search(r"合同项:\s*(\[.*?\])\s*\n带编号正文:", prompt, re.DOTALL)
+            requirements = json.loads(requirements_match.group(1)) if requirements_match else []
+            body = prompt.split("带编号正文:", 1)[-1]
+            paragraphs = re.findall(r"\[段落(\d+)\]\s*(.*?)(?=\n\[段落\d+\]|$)", body, re.DOTALL)
+            results = []
+            for item in requirements:
+                requirement = str(item.get("requirement", ""))
+                chunks = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_]{3,}", requirement)
+                tokens = []
+                for chunk in chunks:
+                    if len(chunk) > 4 and re.fullmatch(r"[\u4e00-\u9fff]+", chunk):
+                        tokens.extend(chunk[index:index + 2] for index in range(0, len(chunk) - 1, 2))
+                    else:
+                        tokens.append(chunk)
+                scored = [
+                    (sum(1 for token in tokens if token in text), number, text.strip())
+                    for number, text in paragraphs
+                ]
+                best = max(scored, default=(0, "", ""), key=lambda row: row[0])
+                present = requirement in body or (bool(tokens) and best[0] >= max(1, (len(tokens) + 1) // 2))
+                constraint_type = str(item.get("constraint_type", ""))
+                passed = not present if constraint_type == "must_not_happen" else present
+                results.append({
+                    "constraint_type": constraint_type,
+                    "requirement": requirement,
+                    "passed": passed,
+                    "confidence": 0.9,
+                    "evidence": best[2][:160] if present else "",
+                    "paragraph_range": f"段落{best[1]}" if present and best[1] else "",
+                    "explanation": "Mock 语义验收与可复现规则判断一致。",
+                })
+            return json.dumps(results, ensure_ascii=False)
         if "quality_scorecard_review" in prompt:
             improved = "【修订稿】" in prompt or "revise_chapter_quality" in prompt
             # ── content-sensitive scoring ──

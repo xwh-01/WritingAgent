@@ -9,6 +9,7 @@ from novelforge.api.schemas import (
     AgenticRunRequest,
     BatchWriteRequest,
     CreateStoryRequest,
+    CharacterFactRequest,
     DirectorRunRequest,
     OutlineRequest,
     OutlineResponse,
@@ -20,6 +21,28 @@ from novelforge.orchestrator.engine import NovelForgeEngine
 from novelforge.orchestrator.trace_exporter import render_debug_report, trace_to_json
 
 router = APIRouter(prefix="/stories", tags=["stories"])
+
+
+@router.get("/{story_id}/facts")
+def list_character_facts(story_id: str, chapter_index: int | None = None) -> dict:
+    """列出事实账本；提供 chapter_index 时只返回当章有效事实。"""
+    engine = get_engine(story_id)
+    return {"facts": [fact.model_dump() for fact in engine.list_character_facts(chapter_index)]}
+
+
+@router.post("/{story_id}/facts")
+def upsert_character_fact(story_id: str, payload: CharacterFactRequest) -> dict:
+    """新增或更新一条用户确认事实。"""
+    return get_engine(story_id).upsert_character_fact(payload).model_dump()
+
+
+@router.delete("/{story_id}/facts/{fact_id}")
+def delete_character_fact(story_id: str, fact_id: str) -> dict:
+    """删除用户确认事实；自动提取事实保持只读。"""
+    deleted = get_engine(story_id).delete_character_fact(fact_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Confirmed fact not found")
+    return {"deleted": True, "fact_id": fact_id}
 
 
 @router.post("/", response_model=StoryResponse)
@@ -79,7 +102,7 @@ def batch_write(story_id: str, payload: BatchWriteRequest) -> dict:
     ).model_dump()
 
 
-@router.post("/{story_id}/agentic-run")
+@router.post("/{story_id}/agentic-run", deprecated=True)
 def agentic_writing_run(story_id: str, payload: AgenticRunRequest) -> dict:
     """POST /stories/{story_id}/agentic-run — 启动代理自动写作运行，支持后台异步执行。"""
     engine = get_engine(story_id)

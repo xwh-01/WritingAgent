@@ -29,6 +29,10 @@ function bindElements() {
         "beatsBtn", "reviewBtn", "autoBtn", "reportBtn", "jobStatus", "qualityReport",
         "longformMetrics", "eventLog", "activeChapterMeta", "agentTrace", "directorInput", "directorRunBtn",
         "directorHints", "contextPreview", "nextActionCard", "nextActionBtn", "agenticRunBtn", "exportDocxBtn",
+        "contractEditor", "saveContractBtn", "contractPov", "contractLocation", "contractTime",
+        "contractMust", "contractMustNot", "contractGoals", "contractThreads", "contractEnding",
+        "contractStyle", "contractNotes", "factLedger", "factCharacter", "factType", "factValue",
+        "factFrom", "factUntil", "factNotes", "saveFactBtn",
     ]) {
         els[id] = document.getElementById(id);
     }
@@ -45,6 +49,8 @@ function bindEvents() {
     els.saveBtn.addEventListener("click", saveChapter);
     els.dashboardBtn.addEventListener("click", openDashboard);
     if (els.exportDocxBtn) els.exportDocxBtn.addEventListener("click", exportDocx);
+    if (els.saveContractBtn) els.saveContractBtn.addEventListener("click", saveChapterContract);
+    if (els.saveFactBtn) els.saveFactBtn.addEventListener("click", saveCharacterFact);
     els.beatsBtn.addEventListener("click", generateBeats);
     els.reviewBtn.addEventListener("click", reviewChapter);
     els.autoBtn.addEventListener("click", autoWrite);
@@ -340,6 +346,171 @@ function renderEditor() {
     els.chapterTitleInput.value = chapter?.title || outline?.title || `第${state.activeChapter}章`;
     els.chapterEditor.value = chapter?.content || "";
     els.activeChapterMeta.textContent = `Chapter ${state.activeChapter}`;
+    renderChapterContract();
+    renderFactLedger();
+}
+
+function renderChapterContract() {
+    if (!els.contractEditor) return;
+    const contracts = state.story?.chapter_contracts || {};
+    const contract = contracts[state.activeChapter] || contracts[String(state.activeChapter)];
+    renderCharacterOptions(els.contractPov, contract?.pov_character || "", true);
+    els.contractLocation.value = contract?.location || "";
+    els.contractTime.value = contract?.time_context || "";
+    els.contractMust.value = linesFrom(contract?.must_happen);
+    els.contractMustNot.value = linesFrom(contract?.must_not_happen);
+    els.contractGoals.value = Object.entries(contract?.character_goals || {})
+        .map(([character, goal]) => `${character}: ${goal}`).join("\n");
+    els.contractThreads.value = linesFrom(contract?.active_threads);
+    els.contractEnding.value = contract?.ending_hook || "";
+    els.contractStyle.value = linesFrom(contract?.style_requirements);
+    els.contractNotes.value = contract?.notes || "";
+    els.contractEditor.value = contract ? JSON.stringify(contract, null, 2) : "";
+    els.contractEditor.placeholder = getOutline(state.activeChapter)
+        ? "合同尚未生成；点击保存合同会先加载默认合同"
+        : "先生成章节大纲";
+}
+
+async function saveChapterContract() {
+    if (!state.story || !getOutline(state.activeChapter)) {
+        setStatus("保存合同前需要先生成本章大纲");
+        return;
+    }
+    try {
+        let contract;
+        if (!els.contractEditor.value.trim()) {
+            contract = await getJson(`/chapters/${state.activeChapter}/contract?story_id=${state.story.id}`);
+            els.contractEditor.value = JSON.stringify(contract, null, 2);
+            const hasFormInput = [els.contractMust, els.contractMustNot, els.contractEnding, els.contractLocation]
+                .some(input => input.value.trim());
+            if (!hasFormInput) {
+                await loadStory(state.story.id);
+                setStatus("默认合同已生成，请检查表单后保存");
+                return;
+            }
+        }
+        contract = els.contractEditor.value.trim() ? JSON.parse(els.contractEditor.value) : {};
+        contract.chapter_index = state.activeChapter;
+        contract.pov_character = els.contractPov.value || null;
+        contract.location = els.contractLocation.value.trim();
+        contract.time_context = els.contractTime.value.trim();
+        contract.must_happen = parseLines(els.contractMust.value);
+        contract.must_not_happen = parseLines(els.contractMustNot.value);
+        contract.character_goals = parseKeyValueLines(els.contractGoals.value);
+        contract.active_threads = parseLines(els.contractThreads.value);
+        contract.ending_hook = els.contractEnding.value.trim();
+        contract.style_requirements = parseLines(els.contractStyle.value);
+        contract.notes = els.contractNotes.value.trim();
+        contract.knowledge_boundaries ||= {};
+        await putJson(`/chapters/${state.activeChapter}/contract?story_id=${state.story.id}`, contract);
+        setStatus(`第${state.activeChapter}章合同已保存`);
+        await loadStory(state.story.id);
+    } catch (error) {
+        setStatus(`合同保存失败: ${error.message}`);
+    }
+}
+
+function renderFactLedger() {
+    if (!els.factLedger) return;
+    renderCharacterOptions(els.factCharacter, els.factCharacter.value || "", false);
+    els.factFrom.value = els.factFrom.value || String(state.activeChapter);
+    const chapter = state.activeChapter;
+    const facts = (state.story?.character_facts || []).filter(fact =>
+        Number(fact.valid_from_chapter) <= chapter
+        && (fact.valid_until_chapter == null || Number(fact.valid_until_chapter) >= chapter)
+    );
+    if (!facts.length) {
+        els.factLedger.innerHTML = '<tr><td colspan="6" class="empty-state">本章暂无人物事实；写作后会自动提取，也可以手动确认。</td></tr>';
+        return;
+    }
+    els.factLedger.innerHTML = facts.map(fact => {
+        const character = state.story?.characters?.[fact.character_id];
+        const name = character?.name || fact.character_id;
+        const source = fact.user_confirmed ? "用户确认" : `第${fact.source_chapter || "?"}章提取`;
+        const until = fact.valid_until_chapter == null ? "持续" : `至${fact.valid_until_chapter}章`;
+        const action = fact.user_confirmed
+            ? `<button class="fact-delete" data-fact-id="${escapeHtml(fact.id)}" title="删除纠正项">×</button>` : "";
+        return `<tr><td>${escapeHtml(name)}</td><td>${escapeHtml(fact.fact_type)}</td>`
+            + `<td>${escapeHtml(fact.value)}</td><td>${fact.valid_from_chapter}章 / ${until}</td>`
+            + `<td>${source}</td><td>${action}</td></tr>`;
+    }).join("");
+    els.factLedger.querySelectorAll("[data-fact-id]").forEach(button => {
+        button.addEventListener("click", () => deleteCharacterFact(button.dataset.factId));
+    });
+}
+
+async function saveCharacterFact() {
+    if (!state.story) {
+        setStatus("请先选择故事");
+        return;
+    }
+    try {
+        const fact = {
+            character_id: els.factCharacter.value,
+            fact_type: els.factType.value,
+            value: els.factValue.value.trim(),
+            valid_from_chapter: Number(els.factFrom.value || state.activeChapter),
+            valid_until_chapter: els.factUntil.value ? Number(els.factUntil.value) : null,
+            notes: els.factNotes.value.trim(),
+            user_confirmed: true,
+        };
+        if (!fact.character_id || !fact.fact_type || !fact.value) {
+            throw new Error("请选择人物、事实类型并填写事实值");
+        }
+        if (fact.valid_until_chapter != null && fact.valid_until_chapter < fact.valid_from_chapter) {
+            throw new Error("失效章节不能早于生效章节");
+        }
+        await postJson(`/stories/${state.story.id}/facts`, fact);
+        els.factValue.value = "";
+        els.factUntil.value = "";
+        els.factNotes.value = "";
+        setStatus("人物事实已确认并保存");
+        await loadStory(state.story.id);
+    } catch (error) {
+        setStatus(`事实保存失败: ${error.message}`);
+    }
+}
+
+async function deleteCharacterFact(factId) {
+    if (!state.story || !factId) return;
+    try {
+        await deleteJson(`/stories/${state.story.id}/facts/${encodeURIComponent(factId)}`);
+        setStatus("人物事实纠正项已删除");
+        await loadStory(state.story.id);
+    } catch (error) {
+        setStatus(`事实删除失败: ${error.message}`);
+    }
+}
+
+function renderCharacterOptions(select, selected, allowEmpty) {
+    if (!select) return;
+    const choices = new Map();
+    Object.entries(state.story?.characters || {}).forEach(([id, character]) => choices.set(id, character.name || id));
+    (state.story?.outlines || []).forEach(outline => {
+        if (outline.pov_character) choices.set(outline.pov_character, outline.pov_character);
+    });
+    const empty = allowEmpty ? '<option value="">未指定</option>' : '<option value="">选择人物</option>';
+    select.innerHTML = empty + [...choices.entries()].map(([id, name]) =>
+        `<option value="${escapeHtml(id)}">${escapeHtml(name)} (${escapeHtml(id)})</option>`
+    ).join("");
+    select.value = selected;
+}
+
+function parseLines(value) {
+    return String(value || "").split(/\r?\n/).map(item => item.trim()).filter(Boolean);
+}
+
+function linesFrom(items) {
+    return (items || []).join("\n");
+}
+
+function parseKeyValueLines(value) {
+    const result = {};
+    parseLines(value).forEach(line => {
+        const index = line.search(/[:：]/);
+        if (index > 0) result[line.slice(0, index).trim()] = line.slice(index + 1).trim();
+    });
+    return result;
 }
 
 function renderLongformMetrics() {
@@ -661,7 +832,8 @@ async function reviewChapter() {
     }
     setStatus("Reviewing");
     const payload = await postJson(`/chapters/${state.activeChapter}/review?story_id=${state.story.id}`, {});
-    renderReview(payload.report);
+    const validation = await postJson(`/chapters/${state.activeChapter}/validate-contract?story_id=${state.story.id}`, {});
+    renderReview(payload.report, validation);
     setStatus("Ready");
 }
 
@@ -859,13 +1031,20 @@ async function loadReport() {
     renderReport(report);
 }
 
-function renderReview(report) {
+function renderReview(report, validation = null) {
     const issues = [
         ...(report.logic_issues || []).map(description => ({ severity: "medium", dimension: "逻辑", description })),
         ...(report.character_issues || []).map(description => ({ severity: "medium", dimension: "人设", description })),
         ...(report.pacing_issues || []).map(description => ({ severity: "medium", dimension: "节奏", description })),
     ];
-    els.qualityReport.innerHTML = issues.length ? issues.map(issueRow).join("") : `<div class="score-row"><strong>${escapeHtml(report.verdict || "reviewed")}</strong></div>`;
+    const rows = [];
+    if (validation) {
+        rows.push(`<div class="score-row"><strong>合同验收</strong> · ${validation.passed ? "passed" : validation.review_required ? "需要人工确认" : "failed"}</div>`);
+        for (const check of validation.checks || []) rows.push(contractCheckRow(check));
+    }
+    if (issues.length) rows.push(...issues.map(issueRow));
+    if (!rows.length) rows.push(`<div class="score-row"><strong>${escapeHtml(report.verdict || "reviewed")}</strong></div>`);
+    els.qualityReport.innerHTML = rows.join("");
 }
 
 function renderReport(report) {
@@ -883,6 +1062,7 @@ function renderReport(report) {
         rows.push(`<div class="score-row"><strong>${Number(report.final_score || 0).toFixed(2)}</strong> · ${report.passed ? "passed" : "not passed"}</div>`);
         for (const round of report.rounds || []) {
             rows.push(`<div class="score-row">Round ${round.round}: <strong>${Number(round.total_score || 0).toFixed(2)}</strong></div>`);
+            for (const check of round.review_report?.contract_checks || []) rows.push(contractCheckRow(check));
             for (const issue of round.review_report?.issues || []) rows.push(issueRow(issue));
         }
         for (const issue of report.residual_issues || []) rows.push(issueRow(issue));
@@ -897,6 +1077,17 @@ function renderReport(report) {
 
 function issueRow(issue) {
     return `<div class="issue-row ${escapeHtml(issue.severity || "medium")}">[${escapeHtml(issue.dimension || "-")}] ${escapeHtml(issue.description || "")}</div>`;
+}
+
+function contractCheckRow(check) {
+    const status = check.status || (check.passed ? "passed" : "failed");
+    const confidence = check.validation_method === "rule+llm" ? ` · 置信度 ${Math.round(Number(check.confidence || 0) * 100)}%` : " · 规则检查";
+    const location = check.paragraph_range ? ` · ${escapeHtml(check.paragraph_range)}` : "";
+    const evidence = check.evidence ? `<blockquote>${escapeHtml(check.evidence)}</blockquote>` : "";
+    return `<div class="contract-check ${escapeHtml(status)}">`
+        + `<div><strong>${escapeHtml(check.requirement || "-")}</strong></div>`
+        + `<small>${escapeHtml(status)}${confidence}${location}</small>`
+        + `<div>${escapeHtml(check.message || "")}</div>${evidence}</div>`;
 }
 
 function openDashboard() {

@@ -5,11 +5,27 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from fastapi.responses import PlainTextResponse
 
-from novelforge.api.schemas import ChapterContentRequest, ChapterResponse, ReviewResponse, ReviseRequest
+from novelforge.api.schemas import ChapterContentRequest, ChapterContractRequest, ChapterResponse, ReviewResponse, ReviseRequest
 from novelforge.api.state import AUTO_REVISION_JOBS, get_engine
 from novelforge.storage.repository import StoryRepository
 
 router = APIRouter(prefix="/chapters", tags=["chapters"])
+
+
+@router.get("/{chapter_index}/contract")
+def get_chapter_contract(chapter_index: int, story_id: str = Query(...), force: bool = Query(default=False)) -> dict:
+    """获取章节合同；不存在时根据大纲自动生成。"""
+    return get_engine(story_id).ensure_chapter_contract(chapter_index, force=force).model_dump()
+
+
+@router.put("/{chapter_index}/contract")
+def update_chapter_contract(
+    chapter_index: int,
+    payload: ChapterContractRequest,
+    story_id: str = Query(...),
+) -> dict:
+    """保存用户编辑并确认的章节合同。"""
+    return get_engine(story_id).update_chapter_contract(chapter_index, payload).model_dump()
 
 
 @router.get("/auto/status")
@@ -54,6 +70,17 @@ def write_chapter(chapter_index: int, story_id: str = Query(...)) -> ChapterResp
 def review_chapter(chapter_index: int, story_id: str = Query(...)) -> ReviewResponse:
     """POST /chapters/{chapter_index}/review — 对指定章节进行 AI 评审并返回报告。"""
     return ReviewResponse(report=get_engine(story_id).request_review(chapter_index))
+
+
+@router.post("/{chapter_index}/validate-contract")
+def validate_chapter_contract(chapter_index: int, story_id: str = Query(...)) -> dict:
+    """联合规则与 LLM 语义判断，逐项返回合同验收状态和原文证据。"""
+    checks = get_engine(story_id).validate_chapter_contract(chapter_index)
+    return {
+        "passed": all(check.passed and check.status == "passed" for check in checks),
+        "review_required": any(check.status == "review_required" for check in checks),
+        "checks": [check.model_dump() for check in checks],
+    }
 
 
 @router.post("/{chapter_index}/audit")

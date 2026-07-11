@@ -61,7 +61,9 @@ class ContextAssembler:
         recalled: list[dict[str, Any]] = []
         vector_hits_count = 0
         for collection in ("characters", "world", "plot_summaries", "memory_cards"):
-            for item in self.vector_store.query(collection, query, k=12, story_id=str(story.id)):
+            for item in self.vector_store.query(
+                collection, query, k=50, story_id=str(story.id), max_chapter=chapter_index
+            ):
                 vector_hits_count += 1
                 metadata = dict(item.get("metadata") or {})
                 metadata.setdefault("collection", collection)
@@ -74,7 +76,9 @@ class ContextAssembler:
             collection = item.get("metadata", {}).get("collection", "memory")
             sections.append((50, f"相关记忆[{collection} score={ranked_item.score:.1f}]: {item['document']}"))
 
-        text_hits = self.text_store.search(query, limit=5, story_id=str(story.id))
+        text_hits = self.text_store.search(
+            query, limit=5, story_id=str(story.id), max_chapter=chapter_index
+        )
         for result in text_hits:
             sections.append((40, f"全文检索片段: {result[:500]}"))
 

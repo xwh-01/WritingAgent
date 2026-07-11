@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from novelforge.agents.base import BaseAgent
-from novelforge.core.models import Beat, ChapterOutline
+from novelforge.core.models import Beat, ChapterContract, ChapterOutline, Story
 
 
 class PlannerAgent(BaseAgent):
@@ -55,6 +55,35 @@ class PlannerAgent(BaseAgent):
                 Beat(scene_index=2, description="中段遭遇阻碍与选择。", goal="推动冲突升级。", outcome="获得线索但付出代价。"),
                 Beat(scene_index=3, description="结尾形成转折或悬念。", goal="完成本章推进。", outcome="新的危险浮现。"),
             ]
+
+    def generate_chapter_contract(self, story: Story, chapter_outline: ChapterOutline) -> ChapterContract:
+        """把章节大纲扩展成可编辑、可验收的章节执行合同。"""
+        system = (
+            "你是小说章节制片人。严格输出 ChapterContract JSON，必须保留大纲目标，"
+            "不要擅自增加重大设定。字段包括 chapter_index,pov_character,location,time_context,"
+            "must_happen,must_not_happen,character_goals,knowledge_boundaries,active_threads,"
+            "ending_hook,style_requirements,notes。"
+        )
+        user = (
+            "generate_chapter_contract\n"
+            f"故事前提: {story.premise}\n"
+            f"章节大纲: {chapter_outline.model_dump_json()}\n"
+            f"当前故事线: {story.story_bible.active_threads}\n"
+            f"文风: {story.style_guide}\n只输出 JSON。"
+        )
+        try:
+            contract = self._parse_model(self._chat(system, user), ChapterContract)
+            contract.chapter_index = chapter_outline.chapter_index
+            return contract
+        except Exception:
+            return ChapterContract(
+                chapter_index=chapter_outline.chapter_index,
+                pov_character=chapter_outline.pov_character,
+                must_happen=[chapter_outline.summary],
+                active_threads=list(story.story_bible.active_threads),
+                style_requirements=[story.style_guide] if story.style_guide else [],
+                notes=f"核心冲突：{chapter_outline.conflict}",
+            )
 
     def adjust_structure(self, feedback: str) -> str:
         """根据反馈返回大纲结构调整建议。"""

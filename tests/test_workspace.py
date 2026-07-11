@@ -26,12 +26,21 @@ def test_workspace_page_and_static_assets_render() -> None:
     assert "Novel Agent Studio" in page.text
     assert "Director Agent" in page.text
     assert "上下文预览" in page.text
+    assert "章节合同" in page.text
+    assert 'id="contractMust"' in page.text
+    assert 'id="contractMustNot"' in page.text
+    assert "人物事实账本" in page.text
+    assert 'id="factCharacter"' in page.text
+    assert 'class="fact-table"' in page.text
     assert "辅助工具" in page.text
     assert "批量编排" in page.text
     assert trace.status_code == 200
     assert "Agent Trace" in trace.text
     assert script.status_code == 200
     assert style.status_code == 200
+    assert "saveCharacterFact" in script.text
+    assert ".structured-form" in style.text
+    assert ".fact-table" in style.text
 
 
 def test_update_chapter_content_endpoint() -> None:
@@ -46,7 +55,14 @@ def test_update_chapter_content_endpoint() -> None:
         json={"title": "第一章", "content": "王绍康站在球门前。", "status": "draft"},
     )
     story = client.get(f"/stories/{story_id}/").json()["story"]
+    validation = client.post(
+        "/chapters/1/validate-contract",
+        params={"story_id": story_id},
+    )
 
     assert updated.status_code == 200
     assert updated.json()["chapter"]["content"] == "王绍康站在球门前。"
     assert story["chapters"]["1"]["title"] == "第一章"
+    assert validation.status_code == 200
+    assert "checks" in validation.json()
+    assert "review_required" in validation.json()

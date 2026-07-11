@@ -2,92 +2,111 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
+import threading
 from pathlib import Path
 
 from novelforge.memory.interfaces import IFTSStore
 
 
 class SQLiteFTSStore(IFTSStore):
-    """基于 SQLite FTS5 的全文检索引擎，FTS 不可用时自动降级为 LIKE 查询。"""
+    """SQLite FTS5 store with story, chapter and thread-safety boundaries."""
 
     def __init__(self, sqlite_path: str):
-        """创建 SQLite 连接并初始化全文检索表结构。"""
         self.path = Path(sqlite_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(self.path, check_same_thread=False)
+        self._lock = threading.RLock()
         self._fts_enabled = True
         self._init_schema()
 
     def index_document(self, doc_id: str, content: str) -> None:
-        """索引一篇文档到 FTS 表和主文档表（insert or replace）。"""
-        with self.connection:
+        with self._lock, self.connection:
             self.connection.execute(
                 "INSERT OR REPLACE INTO documents(doc_id, content) VALUES (?, ?)",
                 (doc_id, content),
             )
             if self._fts_enabled:
+                self.connection.execute("DELETE FROM documents_fts WHERE doc_id = ?", (doc_id,))
                 self.connection.execute(
-                    "INSERT OR REPLACE INTO documents_fts(rowid, doc_id, content) "
+                    "INSERT INTO documents_fts(rowid, doc_id, content) "
                     "VALUES ((SELECT rowid FROM documents WHERE doc_id = ?), ?, ?)",
                     (doc_id, doc_id, content),
                 )
 
-    def search(self, query: str, limit: int = 10, story_id: str | None = None) -> list[str]:
-        """全文搜索，优先使用 FTS MATCH，降级为 LIKE，支持按 story_id 过滤。"""
+    def search(
+        self,
+        query: str,
+        limit: int = 10,
+        story_id: str | None = None,
+        max_chapter: int | None = None,
+    ) -> list[str]:
         if not query.strip():
             return []
         prefix = f"{story_id}:%" if story_id is not None else None
-        cursor = self.connection.cursor()
-        if self._fts_enabled:
-            try:
-                if prefix is None:
-                    rows = cursor.execute(
-                        "SELECT content FROM documents_fts WHERE documents_fts MATCH ? LIMIT ?",
-                        (query, limit),
-                    ).fetchall()
-                else:
-                    rows = cursor.execute(
-                        "SELECT content FROM documents_fts WHERE documents_fts MATCH ? "
-                        "AND doc_id LIKE ? LIMIT ?",
-                        (query, prefix, limit),
-                    ).fetchall()
-                return [row[0] for row in rows]
-            except sqlite3.OperationalError:
-                pass
-        like_query = f"%{query}%"
-        if prefix is None:
-            rows = cursor.execute(
-                "SELECT content FROM documents WHERE content LIKE ? LIMIT ?",
-                (like_query, limit),
-            ).fetchall()
-        else:
-            rows = cursor.execute(
-                "SELECT content FROM documents WHERE content LIKE ? AND doc_id LIKE ? LIMIT ?",
-                (like_query, prefix, limit),
-            ).fetchall()
-        return [row[0] for row in rows]
-
-    def delete_story(self, story_id: str) -> int:
-        """删除指定故事的所有索引文档，返回被删文档数。"""
-        prefix = f"{story_id}:%"
-        with self.connection:
-            doc_ids = [
-                row[0]
-                for row in self.connection.execute(
-                    "SELECT doc_id FROM documents WHERE doc_id LIKE ?",
-                    (prefix,),
-                ).fetchall()
-            ]
+        scan_limit = max(limit * 5, limit)
+        with self._lock:
+            cursor = self.connection.cursor()
             if self._fts_enabled:
-                for doc_id in doc_ids:
-                    self.connection.execute("DELETE FROM documents_fts WHERE doc_id = ?", (doc_id,))
-            self.connection.execute("DELETE FROM documents WHERE doc_id LIKE ?", (prefix,))
+                try:
+                    if prefix is None:
+                        rows = cursor.execute(
+                            "SELECT doc_id, content FROM documents_fts WHERE documents_fts MATCH ? LIMIT ?",
+                            (query, scan_limit),
+                        ).fetchall()
+                    else:
+                        rows = cursor.execute(
+                            "SELECT doc_id, content FROM documents_fts WHERE documents_fts MATCH ? "
+                            "AND doc_id LIKE ? LIMIT ?",
+                            (query, prefix, scan_limit),
+                        ).fetchall()
+                    return self._visible_content(rows, max_chapter, limit)
+                except sqlite3.OperationalError:
+                    pass
+            like_query = f"%{query}%"
+            if prefix is None:
+                rows = cursor.execute(
+                    "SELECT doc_id, content FROM documents WHERE content LIKE ? LIMIT ?",
+                    (like_query, scan_limit),
+                ).fetchall()
+            else:
+                rows = cursor.execute(
+                    "SELECT doc_id, content FROM documents WHERE content LIKE ? AND doc_id LIKE ? LIMIT ?",
+                    (like_query, prefix, scan_limit),
+                ).fetchall()
+            return self._visible_content(rows, max_chapter, limit)
+
+    def delete_prefix(self, id_prefix: str) -> int:
+        pattern = f"{id_prefix}%"
+        with self._lock, self.connection:
+            doc_ids = [row[0] for row in self.connection.execute(
+                "SELECT doc_id FROM documents WHERE doc_id LIKE ?", (pattern,)
+            ).fetchall()]
+            if self._fts_enabled:
+                self.connection.execute("DELETE FROM documents_fts WHERE doc_id LIKE ?", (pattern,))
+            self.connection.execute("DELETE FROM documents WHERE doc_id LIKE ?", (pattern,))
         return len(doc_ids)
 
+    def delete_story(self, story_id: str) -> int:
+        return self.delete_prefix(f"{story_id}:")
+
+    def _visible_content(
+        self,
+        rows: list[tuple[str, str]],
+        max_chapter: int | None,
+        limit: int,
+    ) -> list[str]:
+        return [content for doc_id, content in rows if self._visible(doc_id, max_chapter)][:limit]
+
+    def _visible(self, doc_id: str, max_chapter: int | None) -> bool:
+        if max_chapter is None:
+            return True
+        match = re.search(r":chapter:(\d+)(?::|$)", doc_id)
+        return match is None or int(match.group(1)) <= max_chapter
+
     def _init_schema(self) -> None:
-        """初始化文档主表和 FTS5 虚拟表，FTS 创建失败则标记为不可用。"""
-        with self.connection:
+        with self._lock, self.connection:
             self.connection.execute(
                 "CREATE TABLE IF NOT EXISTS documents("
                 "doc_id TEXT PRIMARY KEY, content TEXT NOT NULL)"

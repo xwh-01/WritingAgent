@@ -11,6 +11,7 @@ from novelforge.llm.base import LLMClient
 from novelforge.longform.causality import CausalityTracker
 from novelforge.longform.character_state import CharacterStateTracker
 from novelforge.longform.foreshadowing import ForeshadowingTracker
+from novelforge.longform.fact_ledger import CharacterFactLedger
 from novelforge.longform.memory_engine import MemoryEngineV2
 from novelforge.longform.pacing import PacingAnalyzer
 from novelforge.longform.summaries import SummaryManager
@@ -39,6 +40,7 @@ class LongformManager:
         self.memory_engine = MemoryEngineV2(memory_ranker_config=memory_ranker_config)
         self.pacing_analyzer = PacingAnalyzer()
         self.character_state_tracker = CharacterStateTracker(llm)
+        self.fact_ledger = CharacterFactLedger()
         self.pacing_history: dict[str, list[dict[str, Any]]] = {}
         self.pacing_warnings: dict[str, str] = {}
 
@@ -57,6 +59,7 @@ class LongformManager:
         states = self.character_state_tracker.extract_state_from_chapter(
             story, chapter_index, content, list(story.characters.values())
         )
+        facts = self.fact_ledger.rebuild_from_states(story)
         pacing = self.pacing_analyzer.analyze_chapter(content)
         key = str(story.id)
         history = [item for item in self.pacing_history.get(key, []) if item.get("chapter") != chapter_index]
@@ -81,6 +84,7 @@ class LongformManager:
             "events": events,
             "foreshadowings": foreshadowings,
             "character_states": states,
+            "character_facts": facts,
             "pacing": pacing,
             "pacing_warning": warning,
             "extraction": extraction,
@@ -145,6 +149,9 @@ class LongformManager:
     def get_enhanced_context(self, chapter_index: int, story: Story, query: str = "") -> str:
         """生成增强写作上下文，聚合记忆引擎上下文包、滚动摘要、未回收伏笔和角色当前状态。"""
         sections: list[str] = []
+        fact_context = self.fact_ledger.format_context(story, chapter_index)
+        if fact_context:
+            sections.append(fact_context)
         pack = self.memory_engine.build_context_pack(story, chapter_index, query=query)
         packed_context = self.memory_engine.format_context_pack(pack)
         if packed_context.strip() != "Memory Engine v2 Context Pack":
@@ -154,7 +161,10 @@ class LongformManager:
         if rolling.strip() != "长篇滚动记忆:":
             sections.append(rolling)
 
-        pending = self.foreshadowing_tracker.get_pending(story)
+        pending = [
+            item for item in self.foreshadowing_tracker.get_pending(story)
+            if item.created_chapter < chapter_index
+        ]
         if pending:
             sections.append(
                 "未回收伏笔:\n"
@@ -175,14 +185,21 @@ class LongformManager:
             character_ids.add(outline.pov_character)
         states: list[CharacterState] = []
         for character_id in character_ids:
-            state = self.character_state_tracker.get_current_state(story, character_id)
+            state = max(
+                (item for item in story.character_states.get(character_id, []) if item.chapter < chapter_index),
+                key=lambda item: item.chapter,
+                default=None,
+            )
             if state:
                 states.append(state)
         if states:
             sections.append("角色当前状态:\n" + json.dumps([state.model_dump() for state in states], ensure_ascii=False))
 
         if story.causal_events:
-            recent = sorted(story.causal_events, key=lambda event: event.chapter)[-5:]
+            recent = sorted(
+                (event for event in story.causal_events if event.chapter < chapter_index),
+                key=lambda event: event.chapter,
+            )[-5:]
             sections.append("最近因果事件:\n" + "\n".join(f"- {event.id}: {event.description}" for event in recent))
         return "\n\n".join(sections)
 

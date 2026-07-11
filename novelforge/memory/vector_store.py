@@ -35,6 +35,7 @@ class InMemoryVectorStore(IVectorStore):
         query_text: str,
         k: int = 5,
         story_id: str | None = None,
+        max_chapter: int | None = None,
     ) -> list[dict[str, Any]]:
         """计算查询文本与集合中文档的余弦相似度，返回 Top-K 结果。"""
         query_vec = self._tokenize(query_text)
@@ -42,9 +43,18 @@ class InMemoryVectorStore(IVectorStore):
         for doc_id, (document, metadata) in self._collections.get(collection, {}).items():
             if story_id is not None and not self._belongs_to_story(doc_id, metadata, story_id):
                 continue
+            if max_chapter is not None and self._future_chapter(metadata, max_chapter):
+                continue
             score = self._cosine(query_vec, self._tokenize(document))
             scored.append({"id": doc_id, "document": document, "metadata": metadata, "score": score})
         return sorted(scored, key=lambda item: item["score"], reverse=True)[:k]
+
+    def delete_prefix(self, collection: str, id_prefix: str) -> int:
+        docs = self._collections.get(collection, {})
+        ids = [doc_id for doc_id in docs if doc_id.startswith(id_prefix)]
+        for doc_id in ids:
+            docs.pop(doc_id, None)
+        return len(ids)
 
     def delete_story(self, story_id: str) -> int:
         """删除与指定故事关联的所有文档，返回被删文档数。"""
@@ -67,6 +77,12 @@ class InMemoryVectorStore(IVectorStore):
     def _belongs_to_story(self, doc_id: str, metadata: dict[str, Any], story_id: str) -> bool:
         """判断文档是否属于指定故事（通过元数据 story_id 或 ID 前缀匹配）。"""
         return str(metadata.get("story_id", "")) == story_id or doc_id.startswith(f"{story_id}:")
+
+    def _future_chapter(self, metadata: dict[str, Any], max_chapter: int) -> bool:
+        try:
+            return int(metadata.get("chapter")) > max_chapter
+        except (TypeError, ValueError):
+            return False
 
     def _cosine(self, a: Counter[str], b: Counter[str]) -> float:
         """计算两个词袋向量的余弦相似度。"""
@@ -119,14 +135,22 @@ class ChromaVectorStore(IVectorStore):
         query_text: str,
         k: int = 5,
         story_id: str | None = None,
+        max_chapter: int | None = None,
     ) -> list[dict[str, Any]]:
         """在 Chroma 集合中执行语义查询，返回 Top-K 结果，支持按 story_id 过滤。"""
         if self._fallback is not None:
-            return self._fallback.query(collection, query_text, k, story_id=story_id)
+            return self._fallback.query(collection, query_text, k, story_id=story_id, max_chapter=max_chapter)
         coll = self.client.get_or_create_collection(collection)
         query_kwargs: dict[str, Any] = {"query_texts": [query_text], "n_results": k}
+        filters: list[dict[str, Any]] = []
         if story_id is not None:
-            query_kwargs["where"] = {"story_id": story_id}
+            filters.append({"story_id": story_id})
+        if max_chapter is not None:
+            filters.append({"chapter": {"$lte": max_chapter}})
+        if len(filters) == 1:
+            query_kwargs["where"] = filters[0]
+        elif filters:
+            query_kwargs["where"] = {"$and": filters}
         result = coll.query(**query_kwargs)
         ids = result.get("ids", [[]])[0]
         docs = result.get("documents", [[]])[0]
@@ -141,6 +165,16 @@ class ChromaVectorStore(IVectorStore):
             }
             for doc_id, doc, meta, distance in zip(ids, docs, metas, distances, strict=False)
         ]
+
+    def delete_prefix(self, collection: str, id_prefix: str) -> int:
+        if self._fallback is not None:
+            return self._fallback.delete_prefix(collection, id_prefix)
+        coll = self.client.get_or_create_collection(collection)
+        items = coll.get()
+        ids = [doc_id for doc_id in items.get("ids", []) if doc_id.startswith(id_prefix)]
+        if ids:
+            coll.delete(ids=ids)
+        return len(ids)
 
     def delete_story(self, story_id: str) -> int:
         """遍历所有集合，删除与指定故事关联的文档，返回删除总数。"""

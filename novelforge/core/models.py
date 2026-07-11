@@ -57,6 +57,40 @@ class Beat(BaseModel):
     outcome: str
 
 
+class ChapterContract(BaseModel):
+    """用户可编辑的章节执行合同，是正文生成和验收的硬约束来源。"""
+
+    chapter_index: int
+    pov_character: str | None = None
+    location: str = ""
+    time_context: str = ""
+    must_happen: list[str] = Field(default_factory=list)
+    must_not_happen: list[str] = Field(default_factory=list)
+    character_goals: dict[str, str] = Field(default_factory=dict)
+    knowledge_boundaries: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
+    active_threads: list[str] = Field(default_factory=list)
+    ending_hook: str = ""
+    style_requirements: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+
+class ConstraintCheck(BaseModel):
+    """章节合同中一项硬约束的验收结果。"""
+
+    constraint_type: str
+    requirement: str
+    passed: bool
+    severity: str = "high"
+    evidence: str = ""
+    message: str = ""
+    status: str = "passed"
+    rule_passed: bool | None = None
+    semantic_passed: bool | None = None
+    confidence: float = 0.0
+    paragraph_range: str = ""
+    validation_method: str = "rule"
+
+
 class ChapterVersion(BaseModel):
     """章节的某个历史版本，用于追溯修改记录。"""
 
@@ -170,6 +204,8 @@ class QualityReviewReport(BaseModel):
     scores: QualityScores = Field(default_factory=QualityScores)
     issues: list[RevisionIssue] = Field(default_factory=list)
     overall_comment: str = ""
+    contract_checks: list[ConstraintCheck] = Field(default_factory=list)
+    hard_constraints_passed: bool = True
 
     def total_score(self, weights: dict[str, float] | None = None) -> float:
         """返回加权综合质量分，委托给内嵌的 scores 对象计算。"""
@@ -349,6 +385,21 @@ class CharacterState(BaseModel):
     relationship_changes: dict[str, str] = Field(default_factory=dict)
 
 
+class CharacterFact(BaseModel):
+    """带生效区间和来源的人物事实，可由系统提取或用户确认。"""
+
+    id: str = Field(default_factory=lambda: f"fact-{uuid4().hex[:12]}")
+    character_id: str
+    fact_type: str
+    value: str
+    valid_from_chapter: int
+    valid_until_chapter: int | None = None
+    source_chapter: int | None = None
+    confidence: float = 1.0
+    user_confirmed: bool = False
+    notes: str = ""
+
+
 class ChapterSummary(BaseModel):
     """某章的场景摘要合集，包含各场景摘要、整体总结和关键事件列表。"""
 
@@ -411,12 +462,14 @@ class Story(BaseModel):
     genre: str = "novel"
     style_guide: str = ""
     outlines: list[ChapterOutline] = Field(default_factory=list)
+    chapter_contracts: dict[int, ChapterContract] = Field(default_factory=dict)
     chapters: dict[int, Chapter] = Field(default_factory=dict)
     characters: dict[str, Character] = Field(default_factory=dict)
     world_settings: list[WorldSetting] = Field(default_factory=list)
     foreshadowings: list[Foreshadowing] = Field(default_factory=list)
     causal_events: list[CausalEvent] = Field(default_factory=list)
     character_states: dict[str, list[CharacterState]] = Field(default_factory=dict)
+    character_facts: list[CharacterFact] = Field(default_factory=list)
     chapter_summaries: dict[int, ChapterSummary] = Field(default_factory=dict)
     volume_summaries: list[VolumeSummary] = Field(default_factory=list)
     arc_summaries: list[ArcSummary] = Field(default_factory=list)

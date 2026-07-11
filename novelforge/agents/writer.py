@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from novelforge.agents.base import BaseAgent
-from novelforge.core.models import Beat, ChapterOutline
+from novelforge.core.models import Beat, ChapterContract, ChapterOutline
 
 
 class WriterAgent(BaseAgent):
@@ -20,6 +20,7 @@ class WriterAgent(BaseAgent):
         beats: list[Beat],
         assembled_context: str,
         style_guide: str = "",
+        contract: ChapterContract | None = None,
     ) -> str:
         """综合大纲、节拍与上下文，撰写完整章节正文。"""
         system = self._build_writer_system_prompt(style_guide)
@@ -27,6 +28,7 @@ class WriterAgent(BaseAgent):
             f"写第 {chapter_index} 章。\n"
             f"章节大纲: {json.dumps(outline.model_dump(), ensure_ascii=False)}\n"
             f"场景节拍: {json.dumps([beat.model_dump() for beat in beats], ensure_ascii=False)}\n"
+            f"章节合同（硬约束，禁止忽略）: {json.dumps(contract.model_dump(), ensure_ascii=False) if contract else '未提供'}\n"
             f"上下文: {assembled_context}\n"
             "输出要求：\n"
             "- 只输出小说正文，不要解释创作思路。\n"

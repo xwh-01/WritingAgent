@@ -16,6 +16,7 @@ from novelforge.core.models import (
     RevisionIssue,
     Story,
 )
+from novelforge.validation import ChapterContractValidator
 from novelforge.orchestrator.trace import ERROR_QUALITY_GATE_FAILED, TraceRecorder, trace_timer
 
 
@@ -85,6 +86,8 @@ class AutoRevisor:
             duration_ms=draft_timer.duration_ms,
         )
         previous_score: float | None = None
+        contract_validator = ChapterContractValidator(getattr(self.critic, "llm", None))
+        contract = self.story.chapter_contracts.get(chapter_index)
 
         for round_num in range(1, self.config.max_rounds + 1):
             if self.stop_requested:
@@ -138,6 +141,35 @@ class AutoRevisor:
             total_score = review.total_score(self.config.quality_weights)
             score_variance = round(statistics.variance(sample_totals), 4) if len(sample_totals) > 1 else 0.0
 
+            # Hard requirements are evaluated before the numeric quality gate.
+            review.contract_checks = contract_validator.validate(current_content, contract)
+            review.hard_constraints_passed = contract_validator.hard_constraints_passed(review.contract_checks)
+            from novelforge.core.models import RevisionIssue as RevIssue
+            for check in review.contract_checks:
+                if not check.passed:
+                    review.issues.append(RevIssue(
+                        dimension=f"contract:{check.constraint_type}",
+                        severity=check.severity,
+                        description=check.message or check.requirement,
+                        evidence=check.evidence,
+                    ))
+
+            # Continuity is also a hard gate; inject it before deciding pass/fail.
+            if continuity_issues:
+                for ci in continuity_issues:
+                    severity = ci.get("severity", "medium") if isinstance(ci, dict) else getattr(ci, "severity", "medium")
+                    description = ci.get("description", "") if isinstance(ci, dict) else getattr(ci, "description", "")
+                    dimension = ci.get("dimension", "unknown") if isinstance(ci, dict) else getattr(ci, "dimension", "unknown")
+                    evidence = ci.get("evidence", "") if isinstance(ci, dict) else getattr(ci, "evidence", "")
+                    review.issues.append(RevIssue(
+                        dimension=f"continuity:{dimension}", severity=severity,
+                        description=description, evidence=evidence,
+                    ))
+                    if severity in {"high", "critical"}:
+                        review.hard_constraints_passed = False
+
+            passed_gate = total_score >= self.config.pass_threshold and review.hard_constraints_passed
+
             recorder.record(
                 stage="auto_revisor",
                 action=f"review_round_{round_num}",
@@ -147,15 +179,15 @@ class AutoRevisor:
                 memory_hits_count=int(getattr(self.assembler, "last_context_stats", {}).get("memory_hits_count", 0) or 0),
                 review_score_before=previous_score,
                 review_score_after=total_score,
-                success=total_score >= self.config.pass_threshold,
-                error_type="" if total_score >= self.config.pass_threshold else ERROR_QUALITY_GATE_FAILED,
-                error_message="" if total_score >= self.config.pass_threshold else (
-                    f"Quality score {total_score:.2f} below pass threshold {self.config.pass_threshold:.1f}"
+                success=passed_gate,
+                error_type="" if passed_gate else ERROR_QUALITY_GATE_FAILED,
+                error_message="" if passed_gate else (
+                    f"Quality score {total_score:.2f}; hard_constraints_passed={review.hard_constraints_passed}"
                     + (f" (variance={score_variance:.4f}, evaluator may be unstable)" if score_variance > 2.0 else "")
                 ),
                 duration_ms=review_timer.duration_ms,
             )
-            if total_score >= self.config.pass_threshold:
+            if passed_gate:
                 result.rounds.append(
                     AutoRevisionRoundReport(
                         round=round_num,
@@ -170,27 +202,6 @@ class AutoRevisor:
                 result.final_score = total_score
                 result.final_content = current_content
                 break
-
-            # ── Inject continuity issues into revision ──
-            if continuity_issues:
-                from novelforge.core.models import ContinuityIssue, RevisionIssue as RevIssue
-                for ci in continuity_issues:
-                    if isinstance(ci, dict):
-                        review.issues.append(RevIssue(
-                            dimension=f"continuity:{ci.get('dimension', 'unknown')}",
-                            severity=ci.get("severity", "medium"),
-                            description=ci.get("description", ""),
-                            evidence=ci.get("evidence", ""),
-                            paragraph_range="",
-                        ))
-                    else:
-                        review.issues.append(RevIssue(
-                            dimension=f"continuity:{getattr(ci, 'dimension', 'unknown')}",
-                            severity=getattr(ci, 'severity', 'medium'),
-                            description=getattr(ci, 'description', ''),
-                            evidence=getattr(ci, 'evidence', ''),
-                            paragraph_range="",
-                        ))
 
             self.status = f"revising_round_{round_num}"
             with trace_timer() as revise_timer:
@@ -229,6 +240,16 @@ class AutoRevisor:
                     assembled_ctx,
                 )
             result.final_score = final_review.total_score(self.config.quality_weights)
+            final_review.contract_checks = contract_validator.validate(current_content, contract)
+            final_review.hard_constraints_passed = contract_validator.hard_constraints_passed(final_review.contract_checks)
+            for check in final_review.contract_checks:
+                if not check.passed:
+                    final_review.issues.append(RevisionIssue(
+                        dimension=f"contract:{check.constraint_type}",
+                        severity=check.severity,
+                        description=check.message or check.requirement,
+                        evidence=check.evidence,
+                    ))
             result.final_content = current_content
             result.residual_issues = final_review.issues
             recorder.record(
@@ -271,7 +292,10 @@ class AutoRevisor:
             chapter = Chapter(index=chapter_index, title=outline.title)
             self.story.chapters[chapter_index] = chapter
         context = self.assembler.assemble_writing_context(chapter_index, self.story)
-        content = self.writer.write_chapter(chapter_index, outline, chapter.beats, context, self.story.style_guide)
+        content = self.writer.write_chapter(
+            chapter_index, outline, chapter.beats, context, self.story.style_guide,
+            contract=self.story.chapter_contracts.get(chapter_index),
+        )
         chapter.content = content
         chapter.summary = outline.summary
         chapter.status = "draft"

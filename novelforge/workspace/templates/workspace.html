@@ -132,6 +132,62 @@
                 </section>
 
                 <section class="agent-section">
+                    <h2>章节合同</h2>
+                    <p class="project-meta">写作前确认不可妥协的剧情要求。</p>
+                    <div class="structured-form" id="contractForm">
+                        <div class="form-row two-columns">
+                            <label>视角人物<select id="contractPov"></select></label>
+                            <label>地点<input id="contractLocation" placeholder="例如：旧车站"></label>
+                        </div>
+                        <label>时间背景<input id="contractTime" placeholder="例如：第三天深夜"></label>
+                        <label>必须发生 <small>每行一项</small><textarea id="contractMust" rows="4"></textarea></label>
+                        <label>禁止发生 <small>每行一项</small><textarea id="contractMustNot" rows="4"></textarea></label>
+                        <label>人物目标 <small>每行“人物ID: 目标”</small><textarea id="contractGoals" rows="3"></textarea></label>
+                        <label>推进故事线 <small>每行一项</small><textarea id="contractThreads" rows="3"></textarea></label>
+                        <label>结尾钩子<input id="contractEnding" placeholder="本章最后必须留下什么"></label>
+                        <label>文风要求 <small>每行一项</small><textarea id="contractStyle" rows="3"></textarea></label>
+                        <label>备注<textarea id="contractNotes" rows="2"></textarea></label>
+                    </div>
+                    <details class="advanced-editor">
+                        <summary>高级 JSON / 知识边界</summary>
+                        <textarea id="contractEditor" rows="10"></textarea>
+                    </details>
+                    <button id="saveContractBtn" type="button"><i data-lucide="shield-check"></i><span>保存章节合同</span></button>
+                </section>
+
+                <section class="agent-section">
+                    <h2>人物事实账本</h2>
+                    <p class="project-meta">显示当前章有效事实，用户确认项优先于自动提取。</p>
+                    <div class="fact-table-wrap"><table class="fact-table">
+                        <thead><tr><th>人物</th><th>类型</th><th>值</th><th>有效期</th><th>来源</th><th></th></tr></thead>
+                        <tbody id="factLedger"></tbody>
+                    </table></div>
+                    <div class="structured-form fact-form">
+                        <div class="form-row two-columns">
+                            <label>人物<select id="factCharacter"></select></label>
+                            <label>事实类型<select id="factType">
+                                <option value="location">位置</option>
+                                <option value="life_status">生存状态</option>
+                                <option value="physical_state">身体状态</option>
+                                <option value="knowledge">已知信息</option>
+                                <option value="possession">持有物品</option>
+                                <option value="identity">身份</option>
+                                <option value="ability">能力/限制</option>
+                                <option value="affiliation">阵营</option>
+                                <option value="emotional_state">情绪</option>
+                            </select></label>
+                        </div>
+                        <label>事实值<input id="factValue" placeholder="例如：位于旧车站"></label>
+                        <div class="form-row two-columns">
+                            <label>生效章节<input id="factFrom" type="number" min="1"></label>
+                            <label>失效章节<input id="factUntil" type="number" min="1" placeholder="留空表示持续有效"></label>
+                        </div>
+                        <label>备注<input id="factNotes" placeholder="为什么需要人工纠正"></label>
+                    </div>
+                    <button id="saveFactBtn" type="button"><i data-lucide="database"></i><span>确认人物事实</span></button>
+                </section>
+
+                <section class="agent-section">
                     <h2>上下文预览</h2>
                     <div id="contextPreview" class="context-preview"></div>
                 </section>
@@ -144,7 +200,7 @@
                         <button id="autoBtn"><i data-lucide="bot"></i><span>自修</span></button>
                         <button id="reportBtn"><i data-lucide="file-text"></i><span>报告</span></button>
                         <button id="batchBtn"><i data-lucide="files"></i><span>批量写作</span></button>
-                        <button id="agenticRunBtn" type="button"><i data-lucide="workflow"></i><span>批量编排</span></button>
+                    <button id="agenticRunBtn" type="button" hidden><i data-lucide="workflow"></i><span>批量编排（已弃用）</span></button>
                     </div>
                 </section>
 

@@ -89,9 +89,7 @@ class MemoryEngineV2:
                 line
                 for line in [
                     f"Premise: {bible.core_premise or story.premise}",
-                    f"Direction: {bible.current_direction}",
                     f"Style: {bible.style_guide or story.style_guide}",
-                    "Active threads: " + "; ".join(bible.active_threads[:12]) if bible.active_threads else "",
                     "World rules: " + "; ".join(bible.world_rules[:8]) if bible.world_rules else "",
                 ]
                 if line
@@ -99,12 +97,12 @@ class MemoryEngineV2:
 
         arc_index = self._arc_index(chapter_index)
         arc = next((item for item in story.arc_summaries if item.arc == arc_index), None)
-        if arc:
+        if arc and arc.chapter_range[1] < chapter_index:
             pack.current_arc = f"Arc {arc.arc} ch{arc.chapter_range[0]}-{arc.chapter_range[1]}: {arc.summary}"
 
         volume = max(1, (chapter_index - 1) // 10 + 1)
         volume_summary = next((item for item in story.volume_summaries if item.volume == volume), None)
-        if volume_summary:
+        if volume_summary and volume_summary.chapter_range[1] < chapter_index:
             pack.current_volume = f"Volume {volume_summary.volume} ch{volume_summary.chapter_range[0]}-{volume_summary.chapter_range[1]}: {volume_summary.summary}"
 
         recent = [
@@ -115,11 +113,14 @@ class MemoryEngineV2:
         pack.recent_summaries = [f"ch{item.chapter_index}: {item.chapter_summary}" for item in recent]
 
         involved = self._query_entities(story, chapter_index, query)
-        pack.character_states = self._format_character_states(story, involved)
+        pack.character_states = self._format_character_states(story, involved, chapter_index)
         pack.pending_foreshadowings = self._format_pending_foreshadowings(story, chapter_index, involved)
         pack.causal_threads = [
             f"{event.id}@ch{event.chapter}: {event.description}"
-            for event in sorted(story.causal_events, key=lambda item: item.chapter)[-12:]
+            for event in sorted(
+                (item for item in story.causal_events if item.chapter < chapter_index),
+                key=lambda item: item.chapter,
+            )[-12:]
         ]
         pack.retrieved_cards = [self._format_card(card) for card in self.retrieve_cards(story, chapter_index, query, involved)]
         pack.continuity_constraints = list(bible.continuity_constraints[:12])
@@ -311,12 +312,16 @@ class MemoryEngineV2:
                 entities.add(character_id)
         return entities
 
-    def _format_character_states(self, story: Story, entities: set[str]) -> list[str]:
+    def _format_character_states(self, story: Story, entities: set[str], chapter_index: int) -> list[str]:
         """格式化指定实体（或全部角色）的当前状态为可读字符串列表。"""
         candidates = entities or set(story.characters.keys())
         rows: list[str] = []
         for character_id in sorted(candidates):
-            current = max(story.character_states.get(character_id, []), key=lambda item: item.chapter, default=None)
+            current = max(
+                (item for item in story.character_states.get(character_id, []) if item.chapter < chapter_index),
+                key=lambda item: item.chapter,
+                default=None,
+            )
             if current:
                 name = story.characters.get(character_id).name if character_id in story.characters else character_id
                 rows.append(f"{name}: {self._format_state(current)}")
@@ -324,7 +329,10 @@ class MemoryEngineV2:
 
     def _format_pending_foreshadowings(self, story: Story, chapter_index: int, entities: set[str]) -> list[str]:
         """格式化未回收伏笔列表，按与当前章节的距离排序。"""
-        pending = [item for item in story.foreshadowings if item.status == "pending"]
+        pending = [
+            item for item in story.foreshadowings
+            if item.status == "pending" and item.created_chapter < chapter_index
+        ]
         pending.sort(key=lambda item: ((item.target_chapter or chapter_index + 999) - chapter_index, -item.created_chapter))
         return [
             f"{item.id} created@ch{item.created_chapter}"

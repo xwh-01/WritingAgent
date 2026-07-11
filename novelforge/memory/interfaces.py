@@ -21,8 +21,14 @@ class IVectorStore(ABC):
         query_text: str,
         k: int = 5,
         story_id: str | None = None,
+        max_chapter: int | None = None,
     ) -> list[dict[str, Any]]:
         """语义检索，返回 Top-K 相关文档，支持按 story_id 过滤。"""
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_prefix(self, collection: str, id_prefix: str) -> int:
+        """删除指定集合内 ID 具有给定前缀的文档。"""
         raise NotImplementedError
 
     @abstractmethod
@@ -64,8 +70,19 @@ class IFTSStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def search(self, query: str, limit: int = 10, story_id: str | None = None) -> list[str]:
+    def search(
+        self,
+        query: str,
+        limit: int = 10,
+        story_id: str | None = None,
+        max_chapter: int | None = None,
+    ) -> list[str]:
         """全文搜索，返回匹配文档内容列表，支持按 story_id 过滤。"""
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_prefix(self, id_prefix: str) -> int:
+        """删除 ID 具有给定前缀的全文文档。"""
         raise NotImplementedError
 
     @abstractmethod

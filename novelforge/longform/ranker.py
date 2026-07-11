@@ -91,6 +91,8 @@ class MemoryRanker:
                 reasons.append(f"type:{item_type}")
 
             chapter = self._int_or_none(metadata.get("chapter"))
+            if chapter is not None and chapter > current_chapter:
+                continue
             if chapter is not None:
                 score += self._recency_score(current_chapter, chapter)
                 reasons.append("recency")
@@ -126,6 +128,8 @@ class MemoryRanker:
         query_terms = self._terms(query)
         ranked: list[RankedMemory] = []
         for card in cards:
+            if card.chapter > current_chapter:
+                continue
             score = float(card.importance)
             reasons: list[str] = ["importance"]
 
@@ -156,7 +160,7 @@ class MemoryRanker:
     def _recency_score(self, current_chapter: int, item_chapter: int) -> float:
         """计算时间新鲜度分数：越近的章节得分越高，未来章节得负分。"""
         if item_chapter > current_chapter:
-            return -4.0  # 未来章节固定惩罚
+            return -4.0
         distance = max(0, current_chapter - item_chapter)
         return max(0.0, self._recency_max - (distance / self._recency_decay_base))
 
