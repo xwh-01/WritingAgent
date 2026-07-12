@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,8 @@ try:
     import networkx as nx
 except Exception:  # pragma: no cover - exercised only without optional dependency
     nx = None
+
+logger = logging.getLogger(__name__)
 
 
 class NetworkXGraphStore(IGraphStore):
@@ -24,6 +28,82 @@ class NetworkXGraphStore(IGraphStore):
         self.path = self.graph_directory / "relationships.json"
         self.graph = nx.Graph() if nx is not None else {"nodes": {}, "edges": []}
         self._load()
+
+    # ------------------------------------------------------------------
+    # Normalization
+    # ------------------------------------------------------------------
+
+    def _normalize_persisted_graph(self, data: object) -> dict[str, object]:
+        """Convert any historical on-disk format into standard node-link output.
+
+        Returns a dict with keys ``directed``, ``multigraph``, ``graph``,
+        ``nodes`` (list of dicts, each containing at least ``"id"``), and
+        ``edges`` (list of dicts, each containing at least ``"source"`` and
+        ``"target"``).
+        """
+        if not isinstance(data, dict):
+            logger.warning("Graph data on disk is not a dict; starting with empty graph.")
+            return _empty_node_link()
+
+        normalized: dict[str, object] = {
+            "directed": data.get("directed", False),
+            "multigraph": data.get("multigraph", False),
+            "graph": data.get("graph", {}),
+            "nodes": self._normalize_nodes(data.get("nodes")),
+            "edges": self._normalize_edges(data.get("edges", data.get("links", []))),
+        }
+        return normalized
+
+    @staticmethod
+    def _normalize_nodes(raw_nodes: object) -> list[dict[str, object]]:
+        """Normalize *raw_nodes* into ``[{"id": …, …}, …]``.
+
+        Accepts a dict (old fallback ``{node_id: {attrs}}``) or a list
+        (standard node-link ``[{"id": …, …}]``).
+        """
+        if isinstance(raw_nodes, dict):
+            result: list[dict[str, object]] = []
+            for node_id, attrs in raw_nodes.items():
+                if isinstance(attrs, dict):
+                    entry: dict[str, object] = dict(attrs)
+                    entry.setdefault("id", str(node_id))
+                    result.append(entry)
+                else:
+                    # Non-dict attribute value – keep the node with minimal info.
+                    result.append({"id": str(node_id)})
+            return result
+
+        if isinstance(raw_nodes, list):
+            return [
+                item if isinstance(item, dict) else {"id": str(item)}
+                for item in raw_nodes
+            ]
+
+        logger.warning("Graph nodes have unexpected type %s; treating as empty.", type(raw_nodes).__name__)
+        return []
+
+    @staticmethod
+    def _normalize_edges(raw_edges: object) -> list[dict[str, object]]:
+        """Normalize *raw_edges* / *links* into ``[{"source": …, "target": …, …}, …]``.
+
+        Edges missing ``source`` or ``target`` are silently dropped.
+        """
+        if not isinstance(raw_edges, list):
+            logger.warning("Graph edges have unexpected type %s; treating as empty.", type(raw_edges).__name__)
+            return []
+
+        kept: list[dict[str, object]] = []
+        for item in raw_edges:
+            if not isinstance(item, dict):
+                continue
+            if "source" not in item or "target" not in item:
+                continue
+            kept.append(dict(item))
+        return kept
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def add_node(self, node_id: str, attributes: dict[str, Any]) -> None:
         """向图中添加节点并保存。"""
@@ -112,49 +192,86 @@ class NetworkXGraphStore(IGraphStore):
             self.save()
         return len(nodes)
 
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
     def save(self) -> None:
-        """将当前图结构序列化为 JSON 并写入磁盘。"""
+        """将当前图序列化为标准 node-link JSON 并原子写入磁盘。"""
         if nx is None:
-            data = self.graph
+            # Save in standard node-link format even in fallback mode.
+            nodes = [
+                {"id": node_id, **attrs}
+                for node_id, attrs in self.graph["nodes"].items()
+            ]
+            data: dict[str, object] = {
+                "directed": False,
+                "multigraph": False,
+                "graph": {},
+                "nodes": nodes,
+                "edges": self.graph["edges"],
+            }
         else:
             try:
                 data = nx.node_link_data(self.graph, edges="edges")
             except TypeError:
                 data = nx.node_link_data(self.graph)
-        self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # Atomic write: tmp → flush → replace.
+        tmp_path = self.path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp_path, self.path)
 
     def _load(self) -> None:
-        """从磁盘 JSON 文件反序列化加载图结构。"""
+        """从磁盘 JSON 文件加载图，自动兼容历史格式。"""
         if not self.path.exists():
             return
-        data = json.loads(self.path.read_text(encoding="utf-8"))
-        if nx is None:
-            # A graph may have been persisted on a machine with NetworkX
-            # installed.  Its node-link format uses a list of node records,
-            # whereas the lightweight fallback uses a mapping.  Normalize it
-            # here so an optional dependency never makes chapter writing fail.
-            if not isinstance(data, dict):
-                data = {}
-            raw_nodes = data.get("nodes", {})
-            if isinstance(raw_nodes, list):
-                node_key = data.get("name", "id")
-                nodes = {
-                    str(item.get(node_key, item.get("id", ""))): {
-                        key: value
-                        for key, value in item.items()
-                        if key not in {node_key, "id"}
-                    }
-                    for item in raw_nodes
-                    if isinstance(item, dict) and item.get(node_key, item.get("id")) is not None
-                }
-            elif isinstance(raw_nodes, dict):
-                nodes = raw_nodes
-            else:
-                nodes = {}
-            raw_edges = data.get("edges", data.get("links", []))
-            self.graph = {"nodes": nodes, "edges": raw_edges if isinstance(raw_edges, list) else []}
-            return
+
+        # ── Read raw file ────────────────────────────────────────────
         try:
-            self.graph = nx.node_link_graph(data, edges="edges")
+            raw = self.path.read_text(encoding="utf-8").strip()
+        except Exception:
+            logger.warning("Could not read graph file %s; starting with empty graph.", self.path)
+            return
+
+        if not raw:
+            logger.warning("Graph file %s is empty; starting with empty graph.", self.path)
+            return
+
+        # ── Parse JSON ───────────────────────────────────────────────
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("Graph file %s contains invalid JSON; starting with empty graph.", self.path)
+            return
+
+        # ── Normalize to standard node-link ──────────────────────────
+        normalized = self._normalize_persisted_graph(data)
+
+        # ── Load into the active implementation ──────────────────────
+        if nx is None:
+            # Convert node-link list back to internal fallback dict.
+            nodes_dict: dict[str, dict[str, object]] = {}
+            for item in normalized["nodes"]:
+                node_id = str(item.pop("id"))
+                nodes_dict[node_id] = item
+            self.graph = {"nodes": nodes_dict, "edges": normalized["edges"]}
+            return
+
+        try:
+            self.graph = nx.node_link_graph(normalized, edges="edges")
         except TypeError:
-            self.graph = nx.node_link_graph(data)
+            # Older NetworkX uses "links" instead of "edges".
+            legacy = dict(normalized)
+            legacy["links"] = legacy.pop("edges", [])
+            self.graph = nx.node_link_graph(legacy)
+
+
+def _empty_node_link() -> dict[str, object]:
+    return {
+        "directed": False,
+        "multigraph": False,
+        "graph": {},
+        "nodes": [],
+        "edges": [],
+    }
