@@ -152,11 +152,11 @@ def build_story(data: dict[str, Any]) -> Story:
             "name": item.get("name", item.get("id")),
             "personality": item.get("personality", ""),
         })
-        story.characters[character.id] = character
-    story.outlines = [ChapterOutline.model_validate(item) for item in data.get("outlines", [])]
-    story.foreshadowings = [Foreshadowing.model_validate(item) for item in data.get("foreshadowings", [])]
-    story.causal_events = [CausalEvent.model_validate(item) for item in data.get("causal_events", [])]
-    story.character_states = {
+        story.content.characters[character.id] = character
+    story.content.outlines = [ChapterOutline.model_validate(item) for item in data.get("outlines", [])]
+    story.memory.foreshadowings = [Foreshadowing.model_validate(item) for item in data.get("foreshadowings", [])]
+    story.memory.causal_events = [CausalEvent.model_validate(item) for item in data.get("causal_events", [])]
+    story.memory.states = {
         character_id: [CharacterState.model_validate(state) for state in states]
         for character_id, states in data.get("character_states", {}).items()
     }

@@ -2,45 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel
 
 from novelforge.core.models import CharacterFact, Chapter, ChapterContract, ChapterOutline, ReviewReport, Story
-
-
-def story_api_payload(story: Story) -> dict[str, Any]:
-    """Return the explicit aggregate shape plus temporary legacy read aliases."""
-    payload = story.model_dump(mode="json")
-    content = payload["content"]
-    memory = payload["memory"]
-    quality = payload["quality"]
-    runs = payload["agent_runs"]
-    payload.update(
-        {
-            "characters": content["characters"],
-            "world_settings": content["world_settings"],
-            "outlines": content["outlines"],
-            "chapter_contracts": content["chapter_contracts"],
-            "chapters": content["chapters"],
-            "character_facts": memory["facts"],
-            "character_states": memory["states"],
-            "foreshadowings": memory["foreshadowings"],
-            "causal_events": memory["causal_events"],
-            "chapter_summaries": memory["chapter_summaries"],
-            "volume_summaries": memory["volume_summaries"],
-            "arc_summaries": memory["arc_summaries"],
-            "story_bible": memory["story_bible"],
-            "memory_cards": memory["cards"],
-            "auto_revision_reports": quality["auto_revision_reports"],
-            "continuity_reports": quality["continuity_reports"],
-            "character_continuity_reports": quality["character_continuity_reports"],
-            "revision_proposals": quality["revision_proposals"],
-            "agent_trace_runs": runs["director"],
-            "batch_reports": runs["batch_reports"],
-        }
-    )
-    return payload
 
 
 class CreateStoryRequest(BaseModel):
@@ -133,7 +97,7 @@ class CharacterFactRequest(CharacterFact):
 class StoryResponse(BaseModel):
     """故事详情的响应体。"""
 
-    story: dict[str, Any]
+    story: Story
 
 
 class OutlineResponse(BaseModel):
@@ -161,4 +125,4 @@ class StatusResponse(BaseModel):
     title: str
     status: str
     current_chapter: int
-    extra: dict[str, Any] = {}
+    extra: dict = {}

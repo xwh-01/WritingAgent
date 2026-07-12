@@ -87,7 +87,7 @@ class AutoRevisor:
         )
         previous_score: float | None = None
         contract_validator = ChapterContractValidator(getattr(self.critic, "llm", None))
-        contract = self.story.chapter_contracts.get(chapter_index)
+        contract = self.story.content.chapter_contracts.get(chapter_index)
 
         for round_num in range(1, self.config.max_rounds + 1):
             if self.stop_requested:
@@ -284,17 +284,17 @@ class AutoRevisor:
 
     def _initial_draft(self, chapter_index: int) -> str:
         """获取或生成指定章节的初稿内容作为修订循环的起点。"""
-        chapter = self.story.chapters.get(chapter_index)
+        chapter = self.story.content.chapters.get(chapter_index)
         if chapter and chapter.content:
             return chapter.content
         outline = self.story.get_outline(chapter_index)
         if chapter is None or not chapter.beats:
             chapter = Chapter(index=chapter_index, title=outline.title)
-            self.story.chapters[chapter_index] = chapter
+            self.story.content.chapters[chapter_index] = chapter
         context = self.assembler.assemble_writing_context(chapter_index, self.story)
         content = self.writer.write_chapter(
             chapter_index, outline, chapter.beats, context, self.story.style_guide,
-            contract=self.story.chapter_contracts.get(chapter_index),
+            contract=self.story.content.chapter_contracts.get(chapter_index),
         )
         chapter.content = content
         chapter.summary = outline.summary

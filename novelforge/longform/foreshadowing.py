@@ -38,20 +38,20 @@ class ForeshadowingTracker(IForeshadowingTracker):
         self.llm = llm
 
     def register(self, story: Story, foreshadowing: Foreshadowing) -> Foreshadowing:
-        """注册伏笔到 story.foreshadowings，若未指定 ID 则自动生成，去重后返回。"""
+        """注册伏笔到 story.memory.foreshadowings，若未指定 ID 则自动生成，去重后返回。"""
         if not foreshadowing.id:
             foreshadowing.id = f"fs-{uuid4().hex[:8]}"
-        if not any(item.id == foreshadowing.id for item in story.foreshadowings):
-            story.foreshadowings.append(foreshadowing)
+        if not any(item.id == foreshadowing.id for item in story.memory.foreshadowings):
+            story.memory.foreshadowings.append(foreshadowing)
         return foreshadowing
 
     def get_pending(self, story: Story) -> list[Foreshadowing]:
         """返回所有状态为 pending 的伏笔列表。"""
-        return [item for item in story.foreshadowings if item.status == "pending"]
+        return [item for item in story.memory.foreshadowings if item.status == "pending"]
 
     def fulfill(self, story: Story, foreshadowing_id: str, chapter: int) -> Foreshadowing | None:
         """将指定伏笔标记为 fulfilled 并记录回收章节，返回更新后的伏笔，未找到返回 None。"""
-        for item in story.foreshadowings:
+        for item in story.memory.foreshadowings:
             if item.id == foreshadowing_id:
                 item.status = "fulfilled"
                 item.notes = (item.notes + f"\n回收于第{chapter}章").strip()
@@ -143,5 +143,5 @@ class ForeshadowingTracker(IForeshadowingTracker):
         """判断候选伏笔是否与已有伏笔重复（同章节 + 同描述）。"""
         return any(
             item.created_chapter == candidate.created_chapter and item.description == candidate.description
-            for item in story.foreshadowings
+            for item in story.memory.foreshadowings
         )

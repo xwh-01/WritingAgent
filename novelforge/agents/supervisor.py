@@ -58,11 +58,11 @@ class SupervisorAgent(BaseAgent):
                 "premise": story.premise,
                 "genre": story.genre,
                 "style_guide": story.style_guide,
-                "outline_count": len(story.outlines),
-                "chapter_count": len(story.chapters),
-                "memory_cards": len(story.memory_cards),
+                "outline_count": len(story.content.outlines),
+                "chapter_count": len(story.content.chapters),
+                "memory_cards": len(story.memory.cards),
                 "open_foreshadowings": [
-                    item.description for item in story.foreshadowings if item.status == "pending"
+                    item.description for item in story.memory.foreshadowings if item.status == "pending"
                 ][:8],
             },
             "chapter_range": {"start": start_chapter, "end": end_chapter},

@@ -76,7 +76,7 @@ def test_director_repairs_missing_precondition_with_outline(test_config: AppConf
     assert run.status == "completed"
     assert any(event["selected_tool"] == "create_outline" for event in run.trace_events)
     assert [task.selected_tool for task in run.plan.tasks] == ["create_outline", "auto_write_chapter"]
-    assert story.outlines
+    assert story.content.outlines
 
 
 def test_director_handles_tool_arg_invalid_without_crashing(test_config: AppConfig) -> None:
@@ -97,7 +97,7 @@ def test_director_handles_tool_arg_invalid_without_crashing(test_config: AppConf
             )],
         ),
     )
-    story.agent_trace_runs.append(run)
+    story.agent_runs.director.append(run)
 
     run = engine.continue_director_agent(run.id, max_steps=4)
 
@@ -110,7 +110,7 @@ def test_auto_revisor_writes_round_trace(test_config: AppConfig) -> None:
     test_config.auto_revisor = AutoRevisorConfig(max_rounds=2, pass_threshold=8.5)
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("A goalkeeper learns anticipation.", title="Auto Trace")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(
             chapter_index=1,
             title="First Save",

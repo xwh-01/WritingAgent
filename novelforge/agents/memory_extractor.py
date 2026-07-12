@@ -146,7 +146,7 @@ class MemoryExtractorAgent(BaseAgent):
             "memory_extract\n"
             f"chapter={chapter_index}\n"
             f"story={json.dumps({'title': story.title, 'premise': story.premise}, ensure_ascii=False)}\n"
-            f"existing_characters={json.dumps([c.model_dump() for c in story.characters.values()], ensure_ascii=False)}\n"
+            f"existing_characters={json.dumps([c.model_dump() for c in story.content.characters.values()], ensure_ascii=False)}\n"
             f"content={content[:12000]}"
         )
         try:
@@ -188,7 +188,7 @@ class MemoryExtractorAgent(BaseAgent):
         found: dict[str, Character] = {}
 
         # 1. Match characters already known to the story.
-        for character in story.characters.values():
+        for character in story.content.characters.values():
             if character.name and (character.name in content or character.id in content):
                 found[character.id] = character
 
@@ -316,10 +316,10 @@ class MemoryExtractorAgent(BaseAgent):
         策略：
         1. 扫描频次较高的有意义名词短语。
         2. 用通用类别模式做分类（location / faction / ability_system / artifact / rule / custom）。
-        3. 已存在于 story.world_settings 的跳过。
+        3. 已存在于 story.content.world_settings 的跳过。
         """
         settings: list[WorldSetting] = []
-        existing_content = {item.content for item in story.world_settings}
+        existing_content = {item.content for item in story.content.world_settings}
 
         # Scan for category matches.
         for category, template_text, signal_words in _WORLD_CATEGORY_PATTERNS:

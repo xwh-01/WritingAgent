@@ -41,7 +41,7 @@ class DashboardDataProvider:
         """整理伏笔列表，标记过期（overdue）状态的伏笔。"""
         results: list[dict[str, Any]] = []
         current_chapter = self.story.current_chapter
-        for item in self.story.foreshadowings:
+        for item in self.story.memory.foreshadowings:
             status = item.status
             if item.status == "pending" and item.target_chapter and current_chapter > item.target_chapter:
                 status = "overdue"
@@ -60,8 +60,8 @@ class DashboardDataProvider:
     def _prepare_character_timeline(self) -> dict[str, list[dict[str, Any]]]:
         """构建角色状态时间线，以角色名为键，按章节排列状态快照。"""
         timeline: dict[str, list[dict[str, Any]]] = {}
-        for character_id, states in self.story.character_states.items():
-            character = self.story.characters.get(character_id)
+        for character_id, states in self.story.memory.states.items():
+            character = self.story.content.characters.get(character_id)
             name = character.name if character else character_id
             timeline[name] = [
                 {
@@ -78,8 +78,8 @@ class DashboardDataProvider:
     def _prepare_pacing_heatmap(self) -> list[dict[str, Any]]:
         """生成章节节奏热力图数据，包含冲突强度、对话/动作比例等指标。"""
         heatmap: list[dict[str, Any]] = []
-        for index, chapter in sorted(self.story.chapters.items()):
-            summary = self.story.chapter_summaries.get(index)
+        for index, chapter in sorted(self.story.content.chapters.items()):
+            summary = self.story.memory.chapter_summaries.get(index)
             scene_count = len(summary.scene_summaries) if summary else max(len(chapter.beats), 1)
             content_len = len(chapter.content or "")
             dialogue_ratio = self._estimate_dialogue_ratio(chapter.content)
@@ -100,7 +100,7 @@ class DashboardDataProvider:
 
     def _estimate_conflict(self, chapter: Chapter) -> int:
         """根据章节正文和纲要中的关键词估算冲突强度（1-10 分）。"""
-        outline = next((item for item in self.story.outlines if item.chapter_index == chapter.index), None)
+        outline = next((item for item in self.story.content.outlines if item.chapter_index == chapter.index), None)
         high_keywords = ("战斗", "死亡", "背叛", "揭露", "决裂", "危机", "毁灭", "失败", "受伤")
         medium_keywords = ("争吵", "威胁", "秘密", "逃离", "对决", "真相", "选择", "冲突")
         text = f"{outline.conflict if outline else ''} {outline.summary if outline else ''} {chapter.content[:1200]}"
@@ -114,7 +114,7 @@ class DashboardDataProvider:
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
         known_ids = set()
-        for event in self.story.causal_events:
+        for event in self.story.memory.causal_events:
             known_ids.add(event.id)
             nodes.append(
                 {
@@ -124,7 +124,7 @@ class DashboardDataProvider:
                     "description": event.description,
                 }
             )
-        for event in self.story.causal_events:
+        for event in self.story.memory.causal_events:
             for cause_id in event.causes:
                 if cause_id in known_ids:
                     edges.append({"source": cause_id, "target": event.id, "relation": "causes"})
@@ -137,7 +137,7 @@ class DashboardDataProvider:
     def _prepare_quality_trend(self) -> list[dict[str, Any]]:
         """聚合自动修订报告和连续性审计的评分趋势数据。"""
         trend: list[dict[str, Any]] = []
-        for chapter_index, report in sorted(self.story.auto_revision_reports.items()):
+        for chapter_index, report in sorted(self.story.quality.auto_revision_reports.items()):
             for round_report in report.rounds:
                 scores = round_report.review_report.scores
                 trend.append(
@@ -163,7 +163,7 @@ class DashboardDataProvider:
                     }
                 )
         reported_chapters = {item["chapter"] for item in trend}
-        for chapter_index, report in sorted(self.story.continuity_reports.items()):
+        for chapter_index, report in sorted(self.story.quality.continuity_reports.items()):
             if chapter_index in reported_chapters:
                 for item in trend:
                     if item["chapter"] == chapter_index:
@@ -184,8 +184,8 @@ class DashboardDataProvider:
 
     def _prepare_story_overview(self) -> dict[str, Any]:
         """计算故事概览统计数据，包括完成率、角色数、伏笔状态等。"""
-        completed = [chapter for chapter in self.story.chapters.values() if chapter.status in {"finalized", "published"}]
-        revised = [chapter for chapter in self.story.chapters.values() if chapter.status == "revised"]
+        completed = [chapter for chapter in self.story.content.chapters.values() if chapter.status in {"finalized", "published"}]
+        revised = [chapter for chapter in self.story.content.chapters.values() if chapter.status == "revised"]
         pending_foreshadowings = [item for item in self._prepare_foreshadowings() if item["status"] == "pending"]
         overdue_foreshadowings = [item for item in self._prepare_foreshadowings() if item["status"] == "overdue"]
         return {
@@ -194,19 +194,19 @@ class DashboardDataProvider:
             "premise": self.story.premise,
             "genre": self.story.genre,
             "status": self.story.status,
-            "total_chapters": len(self.story.outlines),
-            "drafted_chapters": len(self.story.chapters),
+            "total_chapters": len(self.story.content.outlines),
+            "drafted_chapters": len(self.story.content.chapters),
             "completed_chapters": len(completed),
             "revised_chapters": len(revised),
             "current_chapter": self.story.current_chapter,
-            "character_count": len(self.story.characters),
+            "character_count": len(self.story.content.characters),
             "foreshadowing_pending": len(pending_foreshadowings),
             "foreshadowing_overdue": len(overdue_foreshadowings),
-            "event_count": len(self.story.causal_events),
-            "summary_count": len(self.story.chapter_summaries),
-            "auto_report_count": len(self.story.auto_revision_reports),
-            "continuity_report_count": len(self.story.continuity_reports),
-            "continuity_risk_count": sum(1 for report in self.story.continuity_reports.values() if not report.passed),
+            "event_count": len(self.story.memory.causal_events),
+            "summary_count": len(self.story.memory.chapter_summaries),
+            "auto_report_count": len(self.story.quality.auto_revision_reports),
+            "continuity_report_count": len(self.story.quality.continuity_reports),
+            "continuity_risk_count": sum(1 for report in self.story.quality.continuity_reports.values() if not report.passed),
         }
 
     def _estimate_dialogue_ratio(self, content: str) -> float:

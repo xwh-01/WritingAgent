@@ -14,15 +14,15 @@ from novelforge.orchestrator.engine import NovelForgeEngine
 
 def test_continuity_auditor_flags_overdue_foreshadowing() -> None:
     story = Story(title="Audit", premise="Long story")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(chapter_index=2, title="Due", summary="Resolve the clue.", conflict="The old clue must matter.")
     ]
-    story.foreshadowings.append(
+    story.memory.foreshadowings.append(
         Foreshadowing(id="fs-1", description="The glove hides a secret.", created_chapter=1, target_chapter=2)
     )
     auditor = ContinuityAuditorAgent(MockLLMClient())
 
-    report = auditor._rule_audit(story, 2, "The chapter discusses training but ignores the glove.", story.outlines[0])
+    report = auditor._rule_audit(story, 2, "The chapter discusses training but ignores the glove.", story.content.outlines[0])
 
     assert not report.passed
     assert any(issue.dimension == "foreshadowing" for issue in report.issues)
@@ -31,15 +31,15 @@ def test_continuity_auditor_flags_overdue_foreshadowing() -> None:
 def test_engine_records_continuity_report_after_writing(test_config) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("A goalkeeper learns anticipation.", title="Audit Engine")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(chapter_index=1, title="First Save", summary="The hero discovers anticipation.", conflict="He must prove himself.")
     ]
 
     chapter = engine.write_chapter(1)
 
     assert chapter.content
-    assert 1 in story.continuity_reports
-    assert story.continuity_reports[1].risk_score >= 0
+    assert 1 in story.quality.continuity_reports
+    assert story.quality.continuity_reports[1].risk_score >= 0
 
 
 def test_report_api_includes_continuity_report() -> None:

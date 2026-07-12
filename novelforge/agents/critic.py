@@ -96,17 +96,17 @@ class CriticAgent(BaseAgent):
 
     def _get_memory_snapshot(self, story: Story) -> str:
         """收集故事全局内存快照：伏笔、因果事件、角色状态与章节摘要。"""
-        pending_foreshadowings = [item.model_dump() for item in story.foreshadowings if item.status == "pending"][-10:]
-        recent_events = [item.model_dump() for item in sorted(story.causal_events, key=lambda event: event.chapter)[-12:]]
+        pending_foreshadowings = [item.model_dump() for item in story.memory.foreshadowings if item.status == "pending"][-10:]
+        recent_events = [item.model_dump() for item in sorted(story.memory.causal_events, key=lambda event: event.chapter)[-12:]]
         latest_states = {}
-        for character_id, states in story.character_states.items():
+        for character_id, states in story.memory.states.items():
             if states:
                 latest = max(states, key=lambda item: item.chapter)
-                character = story.characters.get(character_id)
+                character = story.content.characters.get(character_id)
                 latest_states[character.name if character else character_id] = latest.model_dump()
         recent_summaries = [
             item.model_dump()
-            for _, item in sorted(story.chapter_summaries.items(), key=lambda pair: pair[0])[-5:]
+            for _, item in sorted(story.memory.chapter_summaries.items(), key=lambda pair: pair[0])[-5:]
         ]
         snapshot = {
             "premise": story.premise,
@@ -162,7 +162,7 @@ class CriticAgent(BaseAgent):
             ))
         pending_due = [
             item
-            for item in story.foreshadowings
+            for item in story.memory.foreshadowings
             if item.status == "pending" and item.target_chapter is not None and item.target_chapter <= chapter_outline.chapter_index
         ]
         if pending_due:

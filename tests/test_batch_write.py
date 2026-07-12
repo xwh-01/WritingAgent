@@ -22,8 +22,8 @@ def test_engine_batch_write_generates_multiple_chapters(test_config: AppConfig) 
 
     assert report.completed == 3
     assert report.failed == 0
-    assert len(story.chapters) == 3
-    assert story.batch_reports
+    assert len(story.content.chapters) == 3
+    assert story.agent_runs.batch_reports
     assert all(item.word_count > 0 for item in report.results)
     assert any(event["stage"] == "beats" for event in events)
     assert any(event["stage"] == "auto_revision" for event in events)

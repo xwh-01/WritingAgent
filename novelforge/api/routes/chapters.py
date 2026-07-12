@@ -50,7 +50,7 @@ def stop_auto_revision(story_id: str = Query(...), job_id: str | None = Query(de
 def get_chapter(chapter_index: int, story_id: str = Query(...)) -> ChapterResponse:
     """GET /chapters/{chapter_index}/ — 获取指定章节的完整信息。"""
     engine = get_engine(story_id)
-    chapter = engine.story.chapters[chapter_index]
+    chapter = engine.story.content.chapters[chapter_index]
     return ChapterResponse(chapter=chapter)
 
 
@@ -130,8 +130,8 @@ def auto_write_chapter(
 def get_auto_revision_report(chapter_index: int, story_id: str = Query(...)) -> dict:
     """GET /chapters/{chapter_index}/report — 获取章节的自动修订测试报告（JSON 格式）。"""
     engine = get_engine(story_id)
-    report = engine.story.auto_revision_reports.get(chapter_index)
-    continuity = engine.story.continuity_reports.get(chapter_index)
+    report = engine.story.quality.auto_revision_reports.get(chapter_index)
+    continuity = engine.story.quality.continuity_reports.get(chapter_index)
     if report:
         payload = report.model_dump()
         payload["continuity_report"] = continuity.model_dump() if continuity else None
@@ -145,7 +145,7 @@ def get_auto_revision_report(chapter_index: int, story_id: str = Query(...)) -> 
 def get_auto_revision_report_markdown(chapter_index: int, story_id: str = Query(...)) -> str:
     """GET /chapters/{chapter_index}/report.md — 获取章节的自动修订报告（Markdown 格式）。"""
     engine = get_engine(story_id)
-    report = engine.story.auto_revision_reports.get(chapter_index)
+    report = engine.story.quality.auto_revision_reports.get(chapter_index)
     if report is None:
         return "No auto-revision report found."
     return StoryRepository().format_auto_revision_report(engine.story, report)

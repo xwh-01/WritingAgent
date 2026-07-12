@@ -22,8 +22,8 @@ def test_director_agent_runs_dynamic_tool_steps(test_config: AppConfig) -> None:
     assert len(run.steps) == 2
     assert [step.selected_tool for step in run.steps] == ["create_outline", "auto_write_chapter"]
     assert run.steps[-1].success
-    assert story.agent_trace_runs[-1].id == run.id
-    assert story.chapters
+    assert story.agent_runs.director[-1].id == run.id
+    assert story.content.chapters
 
 
 def test_director_agent_can_list_foreshadowings(test_config: AppConfig) -> None:
@@ -41,10 +41,10 @@ def test_director_agent_can_list_foreshadowings(test_config: AppConfig) -> None:
 def test_director_revision_preserves_user_instruction(test_config: AppConfig, monkeypatch) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("一座海港城正在失去记忆。", title="定向修改")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(chapter_index=1, title="潮声", summary="主角抵达港口。", conflict="记忆开始消退。")
     ]
-    story.chapters[1] = Chapter(index=1, title="潮声", content="原有正文", status="draft")
+    story.content.chapters[1] = Chapter(index=1, title="潮声", content="原有正文", status="draft")
     story.current_chapter = 1
     captured = {}
 
@@ -61,8 +61,8 @@ def test_director_revision_preserves_user_instruction(test_config: AppConfig, mo
     assert [step.selected_tool for step in run.steps] == ["inspect_chapter", "revise_chapter"]
     assert run.steps[1].tool_args["revision_instruction"] == "把第1章改得更阴冷克制，保留结尾"
     assert captured["instruction"] == "把第1章改得更阴冷克制，保留结尾"
-    assert story.chapters[1].content == "原有正文"
-    proposal = story.revision_proposals[-1]
+    assert story.content.chapters[1].content == "原有正文"
+    proposal = story.quality.revision_proposals[-1]
     assert proposal.id == run.proposal_ids[-1]
     assert proposal.proposed_content == "按要求修改后的正文"
     assert proposal.status == "awaiting_approval"
@@ -75,10 +75,10 @@ def test_director_revision_preserves_user_instruction(test_config: AppConfig, mo
 def test_director_question_can_resume_same_run(test_config: AppConfig, monkeypatch) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("一座海港城正在失去记忆。", title="追问恢复")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(chapter_index=1, title="潮声", summary="主角抵达港口。", conflict="记忆开始消退。")
     ]
-    story.chapters[1] = Chapter(index=1, title="潮声", content="原有正文", status="draft")
+    story.content.chapters[1] = Chapter(index=1, title="潮声", content="原有正文", status="draft")
 
     run = engine.run_director_agent("帮我修改一下", max_steps=1)
     assert run.status == "needs_user_input"
@@ -90,16 +90,16 @@ def test_director_question_can_resume_same_run(test_config: AppConfig, monkeypat
     assert resumed.pending_question == ""
     assert resumed.user_responses == ["第1章"]
     assert resumed.steps[0].step == 1
-    assert len(story.agent_trace_runs) == 1
+    assert len(story.agent_runs.director) == 1
 
 
 def test_revision_proposal_can_be_rejected_without_overwriting(test_config: AppConfig, monkeypatch) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("旧塔每晚都会改变位置。", title="拒绝候选")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(chapter_index=1, title="旧塔", summary="主角发现旧塔。", conflict="地图与现实冲突。")
     ]
-    story.chapters[1] = Chapter(index=1, title="旧塔", content="不可覆盖的原文", status="draft")
+    story.content.chapters[1] = Chapter(index=1, title="旧塔", content="不可覆盖的原文", status="draft")
     monkeypatch.setattr(
         engine.editor,
         "revise_chapter",
@@ -110,7 +110,7 @@ def test_revision_proposal_can_be_rejected_without_overwriting(test_config: AppC
     rejected = engine.reject_revision_proposal(proposal.id)
 
     assert rejected.status == "rejected"
-    assert story.chapters[1].content == "不可覆盖的原文"
+    assert story.content.chapters[1].content == "不可覆盖的原文"
 
 
 def test_director_saves_checkpoint_and_continues_plan(test_config: AppConfig) -> None:
@@ -152,10 +152,10 @@ def test_director_retries_when_evaluator_rejects_result(test_config: AppConfig, 
 def test_proposal_feedback_stays_linked_to_director_run(test_config: AppConfig, monkeypatch) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("雾中的旧城隐藏着一扇门。", title="候选反馈")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(chapter_index=1, title="门", summary="主角找到门。", conflict="门后传来熟悉声音。")
     ]
-    story.chapters[1] = Chapter(index=1, title="门", content="原文", status="draft")
+    story.content.chapters[1] = Chapter(index=1, title="门", content="原文", status="draft")
     monkeypatch.setattr(engine.editor, "revise_chapter", lambda *args, **kwargs: "候选正文")
 
     run = engine.run_director_agent("修改第1章，增强悬疑感", max_steps=3)
@@ -166,16 +166,16 @@ def test_proposal_feedback_stays_linked_to_director_run(test_config: AppConfig, 
     assert run.status == "awaiting_approval"
     assert run.plan.status == "awaiting_approval"
     assert run.proposal_ids[-1] == second.id
-    assert story.chapters[1].content == "原文"
+    assert story.content.chapters[1].content == "原文"
 
 
 def test_rejecting_proposal_closes_waiting_run(test_config: AppConfig, monkeypatch) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("雪原上只剩一串脚印。", title="拒绝运行")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(chapter_index=1, title="脚印", summary="主角追踪脚印。", conflict="脚印突然消失。")
     ]
-    story.chapters[1] = Chapter(index=1, title="脚印", content="原文", status="draft")
+    story.content.chapters[1] = Chapter(index=1, title="脚印", content="原文", status="draft")
     monkeypatch.setattr(engine.editor, "revise_chapter", lambda *args, **kwargs: "候选正文")
 
     run = engine.run_director_agent("修改第1章", max_steps=3)
@@ -183,20 +183,20 @@ def test_rejecting_proposal_closes_waiting_run(test_config: AppConfig, monkeypat
 
     assert run.status == "rejected"
     assert run.plan.status == "rejected"
-    assert story.chapters[1].content == "原文"
+    assert story.content.chapters[1].content == "原文"
 
 
 def test_director_repairs_only_character_arc_drift_targets(test_config: AppConfig, monkeypatch) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("苏黎在旧城追查失踪案。", title="角色弧线")
-    story.characters["suli"] = Character(id="suli", name="苏黎")
-    story.outlines = [
+    story.content.characters["suli"] = Character(id="suli", name="苏黎")
+    story.content.outlines = [
         ChapterOutline(chapter_index=1, title="旧城", summary="苏黎开始调查。", conflict="她发现危险线索。"),
         ChapterOutline(chapter_index=2, title="城堡", summary="苏黎进入城堡。", conflict="她突然改变决定。"),
     ]
-    story.chapters[1] = Chapter(index=1, title="旧城", content="苏黎害怕地留在旧城调查。", status="draft")
-    story.chapters[2] = Chapter(index=2, title="城堡", content="苏黎兴奋地出现在城堡。", status="draft")
-    story.character_states["suli"] = [
+    story.content.chapters[1] = Chapter(index=1, title="旧城", content="苏黎害怕地留在旧城调查。", status="draft")
+    story.content.chapters[2] = Chapter(index=2, title="城堡", content="苏黎兴奋地出现在城堡。", status="draft")
+    story.memory.states["suli"] = [
         CharacterState(character_id="suli", chapter=1, emotional_state="恐惧", location="旧城"),
         CharacterState(character_id="suli", chapter=2, emotional_state="兴奋", location="城堡"),
     ]
@@ -216,14 +216,14 @@ def test_director_repairs_only_character_arc_drift_targets(test_config: AppConfi
     assert [task.selected_tool for task in run.plan.tasks] == [
         "analyze_character_continuity", "revise_chapter"
     ]
-    report = story.character_continuity_reports[-1]
+    report = story.quality.character_continuity_reports[-1]
     assert report.character_id == "suli"
     assert report.affected_chapters == [2]
-    proposal = story.revision_proposals[-1]
+    proposal = story.quality.revision_proposals[-1]
     assert proposal.chapter_index == 2
     assert "第2章" in captured["instruction"]
-    assert story.chapters[1].content == "苏黎害怕地留在旧城调查。"
-    assert story.chapters[2].content == "苏黎兴奋地出现在城堡。"
+    assert story.content.chapters[1].content == "苏黎害怕地留在旧城调查。"
+    assert story.content.chapters[2].content == "苏黎兴奋地出现在城堡。"
 
 
 def test_director_agent_api_and_trace_page() -> None:

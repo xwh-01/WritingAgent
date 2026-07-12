@@ -12,7 +12,7 @@ def test_story_repository_lists_and_exports_report(test_config: AppConfig) -> No
     test_config.auto_revisor = AppAutoRevisorConfig(max_rounds=2, pass_threshold=8.5)
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("一个少年在球场获得预判能力", title="仓库测试")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(chapter_index=1, title="第一扑", summary="他第一次扑救。", conflict="他必须证明自己。")
     ]
     result = engine.auto_write_chapter(1)
@@ -76,7 +76,7 @@ def test_story_aggregate_migrates_flat_state_to_domain_boundaries() -> None:
 def test_rebuild_indexes_uses_canonical_story_state(test_config: AppConfig) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("A keeper protects a secret city.", title="Index Rebuild")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(chapter_index=1, title="First Save", summary="The keeper finds a secret.", conflict="Danger arrives.")
     ]
     engine.update_chapter_content(1, "alpha index rebuild evidence")
@@ -96,7 +96,7 @@ def test_auto_revision_job_registry_runs_background_job(test_config: AppConfig) 
     test_config.auto_revisor = AppAutoRevisorConfig(max_rounds=2, pass_threshold=8.5)
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("一个少年在球场获得预判能力", title="任务测试")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(chapter_index=1, title="第一扑", summary="他第一次扑救。", conflict="他必须证明自己。")
     ]
     registry = AutoRevisionJobRegistry()

@@ -10,8 +10,8 @@ from novelforge.longform.fact_ledger import CharacterFactLedger
 
 def test_fact_ledger_builds_temporal_intervals() -> None:
     story = Story(title="Facts", premise="A journey")
-    story.characters["hero"] = Character(id="hero", name="Hero")
-    story.character_states["hero"] = [
+    story.content.characters["hero"] = Character(id="hero", name="Hero")
+    story.memory.states["hero"] = [
         CharacterState(character_id="hero", chapter=1, location="village", emotional_state="calm"),
         CharacterState(
             character_id="hero",
@@ -35,7 +35,7 @@ def test_fact_ledger_builds_temporal_intervals() -> None:
 
 def test_confirmed_fact_overrides_extracted_fact_only_in_its_interval() -> None:
     story = Story(title="Override", premise="A mystery")
-    story.character_states["hero"] = [
+    story.memory.states["hero"] = [
         CharacterState(character_id="hero", chapter=1, location="station")
     ]
     ledger = CharacterFactLedger()

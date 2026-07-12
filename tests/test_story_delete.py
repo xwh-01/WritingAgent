@@ -52,8 +52,8 @@ def test_memory_backends_delete_story(tmp_path) -> None:
 
 def test_context_retrieval_is_scoped_to_story(tmp_path) -> None:
     story = Story(title="Scoped", premise="own premise")
-    story.characters["hero"] = Character(id="hero", name="Hero")
-    story.outlines.append(
+    story.content.characters["hero"] = Character(id="hero", name="Hero")
+    story.content.outlines.append(
         ChapterOutline(
             chapter_index=1,
             title="Shared clue",
@@ -100,9 +100,9 @@ def test_delete_story_api_removes_file_and_engine() -> None:
     created = client.post("/stories/", json={"premise": "cleanup", "title": "Delete API"})
     story_id = created.json()["story"]["id"]
     engine = ENGINES[story_id]
-    engine.story.characters["hero"] = Character(id="hero", name="Hero")
-    engine.story.chapters[1] = Chapter(index=1, title="One", content="cleanup memory")
-    engine._process_chapter_memory(engine.story, engine.story.chapters[1])
+    engine.story.content.characters["hero"] = Character(id="hero", name="Hero")
+    engine.story.content.chapters[1] = Chapter(index=1, title="One", content="cleanup memory")
+    engine._process_chapter_memory(engine.story, engine.story.content.chapters[1])
     engine.save_state()
 
     response = client.delete(f"/stories/{story_id}")

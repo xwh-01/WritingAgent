@@ -50,7 +50,7 @@ class ContextAssembler:
             (95, f"文风指南: {story.style_guide or '保持清晰、连贯、有画面感。'}"),
             (90, f"本章大纲: {json.dumps(outline.model_dump(), ensure_ascii=False)}"),
         ]
-        chapter = story.chapters.get(chapter_index)
+        chapter = story.content.chapters.get(chapter_index)
         if chapter and chapter.beats:
             sections.append((85, "本章节拍: " + json.dumps([b.model_dump() for b in chapter.beats], ensure_ascii=False)))
         if outline.pov_character:
@@ -124,7 +124,7 @@ class ContextAssembler:
     def _query_entities(self, story: Story, query: str) -> set[str]:
         """从查询字符串中识别引用的角色实体 ID。"""
         entities: set[str] = set()
-        for character_id, character in story.characters.items():
+        for character_id, character in story.content.characters.items():
             if character_id in query or (character.name and character.name in query):
                 entities.add(character_id)
         return entities

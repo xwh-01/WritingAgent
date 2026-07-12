@@ -9,7 +9,7 @@ def test_auto_write_generates_report(test_config: AppConfig) -> None:
     test_config.auto_revisor = AppAutoRevisorConfig(max_rounds=3, pass_threshold=8.5)
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("一个少年在球场获得预判能力", title="天才门将")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(
             chapter_index=1,
             title="第一扑",
@@ -24,15 +24,15 @@ def test_auto_write_generates_report(test_config: AppConfig) -> None:
     assert result.rounds
     assert result.passed
     assert result.final_score >= 8.5
-    assert 1 in engine.story.auto_revision_reports
-    assert engine.story.chapters[1].content
+    assert 1 in engine.story.quality.auto_revision_reports
+    assert engine.story.content.chapters[1].content
 
 
 def test_auto_write_records_residual_issues_when_threshold_too_high(test_config: AppConfig) -> None:
     test_config.auto_revisor = AppAutoRevisorConfig(max_rounds=1, pass_threshold=9.9)
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("一个少年在球场获得预判能力", title="天才门将")
-    story.outlines = [
+    story.content.outlines = [
         ChapterOutline(
             chapter_index=1,
             title="第一扑",

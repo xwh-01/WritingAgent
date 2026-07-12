@@ -19,11 +19,11 @@ from novelforge.dashboard.data_provider import DashboardDataProvider
 def make_dashboard_story() -> Story:
     story = Story(title="门将之路", premise="少年从游戏中学会预判。", genre="sports")
     story.current_chapter = 4
-    story.outlines.append(
+    story.content.outlines.append(
         ChapterOutline(chapter_index=1, title="初见后羿", summary="主角发现预判能力。", conflict="秘密带来危机")
     )
-    story.chapters[1] = Chapter(index=1, title="初见后羿", content="王绍康在球场发现秘密。他扑救成功。", status="revised")
-    story.foreshadowings.append(
+    story.content.chapters[1] = Chapter(index=1, title="初见后羿", content="王绍康在球场发现秘密。他扑救成功。", status="revised")
+    story.memory.foreshadowings.append(
         Foreshadowing(
             id="fs-1",
             description="后羿预判感会在决赛回收",
@@ -31,17 +31,17 @@ def make_dashboard_story() -> Story:
             target_chapter=3,
         )
     )
-    story.characters["hero"] = Character(id="hero", name="王绍康")
-    story.character_states["hero"] = [
+    story.content.characters["hero"] = Character(id="hero", name="王绍康")
+    story.memory.states["hero"] = [
         CharacterState(character_id="hero", chapter=1, emotional_state="兴奋", location="球场")
     ]
-    story.chapter_summaries[1] = ChapterSummary(
+    story.memory.chapter_summaries[1] = ChapterSummary(
         chapter_index=1,
         scene_summaries=["王绍康第一次完成关键扑救"],
         chapter_summary="王绍康在球场发现自己的预判能力。",
         key_events=["ev-1"],
     )
-    story.causal_events.append(CausalEvent(id="ev-1", chapter=1, description="王绍康完成关键扑救"))
+    story.memory.causal_events.append(CausalEvent(id="ev-1", chapter=1, description="王绍康完成关键扑救"))
     return story
 
 

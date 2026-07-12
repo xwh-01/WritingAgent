@@ -57,7 +57,7 @@ class LongformManager:
         summary.key_events = [event.id for event in events]
         foreshadowings = self.foreshadowing_tracker.analyze_new_chapter(story, chapter_index, content)
         states = self.character_state_tracker.extract_state_from_chapter(
-            story, chapter_index, content, list(story.characters.values())
+            story, chapter_index, content, list(story.content.characters.values())
         )
         facts = self.fact_ledger.rebuild_from_states(story)
         pacing = self.pacing_analyzer.analyze_chapter(content)
@@ -97,9 +97,9 @@ class LongformManager:
         合并角色、世界设定、关系和连续性约束，对已有内容做增量更新。
         """
         for character in extraction.characters:
-            existing = story.characters.get(character.id)
+            existing = story.content.characters.get(character.id)
             if existing is None:
-                story.characters[character.id] = character
+                story.content.characters[character.id] = character
                 continue
             if character.name:
                 existing.name = character.name
@@ -120,23 +120,23 @@ class LongformManager:
             if character.arc:
                 existing.arc = self._merge_text(existing.arc, character.arc)
 
-        existing_world = {(item.category, item.content) for item in story.world_settings}
+        existing_world = {(item.category, item.content) for item in story.content.world_settings}
         for setting in extraction.world_settings:
             key = (setting.category, setting.content)
             if key not in existing_world:
-                story.world_settings.append(setting)
+                story.content.world_settings.append(setting)
                 existing_world.add(key)
 
         for relation in extraction.relationships:
-            source = story.characters.get(relation.source)
-            target = story.characters.get(relation.target)
+            source = story.content.characters.get(relation.source)
+            target = story.content.characters.get(relation.target)
             if source and target:
                 source.relationships[target.id] = relation.relation
                 target.relationships.setdefault(source.id, relation.relation)
 
         for constraint in extraction.continuity_constraints:
-            if constraint not in story.story_bible.continuity_constraints:
-                story.story_bible.continuity_constraints.append(constraint)
+            if constraint not in story.memory.story_bible.continuity_constraints:
+                story.memory.story_bible.continuity_constraints.append(constraint)
 
     def _merge_text(self, old: str, new: str) -> str:
         """合并两段文本：如果 new 已包含在 old 中则保留 old，否则用分号拼接。"""
@@ -180,13 +180,13 @@ class LongformManager:
             outline = story.get_outline(chapter_index)
         except KeyError:
             pass
-        character_ids = set(story.characters)
+        character_ids = set(story.content.characters)
         if outline and outline.pov_character:
             character_ids.add(outline.pov_character)
         states: list[CharacterState] = []
         for character_id in character_ids:
             state = max(
-                (item for item in story.character_states.get(character_id, []) if item.chapter < chapter_index),
+                (item for item in story.memory.states.get(character_id, []) if item.chapter < chapter_index),
                 key=lambda item: item.chapter,
                 default=None,
             )
@@ -195,9 +195,9 @@ class LongformManager:
         if states:
             sections.append("角色当前状态:\n" + json.dumps([state.model_dump() for state in states], ensure_ascii=False))
 
-        if story.causal_events:
+        if story.memory.causal_events:
             recent = sorted(
-                (event for event in story.causal_events if event.chapter < chapter_index),
+                (event for event in story.memory.causal_events if event.chapter < chapter_index),
                 key=lambda event: event.chapter,
             )[-5:]
             sections.append("最近因果事件:\n" + "\n".join(f"- {event.id}: {event.description}" for event in recent))
@@ -207,7 +207,7 @@ class LongformManager:
         """审查章节一致性，返回伏笔、节奏和角色状态三方面的问题列表。"""
         pending_due = [
             f"伏笔 {item.id} 计划在第{item.target_chapter}章回收，但仍为 pending：{item.description}"
-            for item in story.foreshadowings
+            for item in story.memory.foreshadowings
             if item.status == "pending" and item.target_chapter is not None and item.target_chapter <= chapter_index
         ]
         pacing = self.pacing_analyzer.analyze_chapter(content)
@@ -215,7 +215,7 @@ class LongformManager:
             self.pacing_history.get(str(story.id), []) + [{"chapter": chapter_index, **pacing}]
         )
         state_issues: list[str] = []
-        for character_id, states in story.character_states.items():
+        for character_id, states in story.memory.states.items():
             previous = max((state for state in states if state.chapter < chapter_index), key=lambda s: s.chapter, default=None)
             current = max((state for state in states if state.chapter == chapter_index), key=lambda s: s.chapter, default=None)
             if current:
@@ -236,7 +236,7 @@ class LongformManager:
     ) -> Foreshadowing:
         """手动添加一条伏笔到故事中，通过 ForeshadowingTracker 注册并返回。"""
         item = Foreshadowing(
-            id=f"fs-manual-{len(story.foreshadowings) + 1}",
+            id=f"fs-manual-{len(story.memory.foreshadowings) + 1}",
             description=description,
             created_chapter=created_chapter,
             target_chapter=target_chapter,

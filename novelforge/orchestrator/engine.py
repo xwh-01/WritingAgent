@@ -139,7 +139,7 @@ class NovelForgeEngine:
         story.status = WorkflowState.OUTLINE_GENERATED.value
         story.touch()
         self.save_state()
-        return story.outlines
+        return story.content.outlines
 
     def generate_beats(self, chapter_index: int) -> Chapter:
         """为指定章节生成场景节拍（scene beats），装配写作上下文后调用 Planner 代理。"""
@@ -148,7 +148,7 @@ class NovelForgeEngine:
         self.ensure_chapter_contract(chapter_index)
         context = self.context_assembler.assemble_writing_context(chapter_index, story)
         beats = self.planner.generate_beats(outline, context)
-        chapter = story.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
+        chapter = story.content.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
         chapter.beats = beats
         self.content_service.save_chapter(story, chapter)
         story.status = WorkflowState.CHAPTER_BEATS_READY.value
@@ -160,7 +160,7 @@ class NovelForgeEngine:
         """撰写指定章节的草稿。若尚未生成节拍则先调用 generate_beats，然后调用 Writer 代理写作，必要时润色。"""
         story = self._require_story()
         outline = story.get_outline(chapter_index)
-        chapter = story.chapters.get(chapter_index)
+        chapter = story.content.chapters.get(chapter_index)
         if chapter is None or not chapter.beats:
             chapter = self.generate_beats(chapter_index)
         context = self.context_assembler.assemble_writing_context(chapter_index, story)
@@ -180,7 +180,7 @@ class NovelForgeEngine:
     def ensure_chapter_contract(self, chapter_index: int, force: bool = False) -> ChapterContract:
         """返回章节合同；缺失时从大纲生成，force=True 时重新生成。"""
         story = self._require_story()
-        existing = story.chapter_contracts.get(chapter_index)
+        existing = story.content.chapter_contracts.get(chapter_index)
         if existing is not None and not force:
             return existing
         outline = story.get_outline(chapter_index)
@@ -204,7 +204,7 @@ class NovelForgeEngine:
         """列出全部事实，或列出指定章节生效的事实。"""
         story = self._require_story()
         if chapter_index is None:
-            return list(story.character_facts)
+            return list(story.memory.facts)
         return self.longform_manager.fact_ledger.facts_at(story, chapter_index)
 
     def upsert_character_fact(self, fact: CharacterFact) -> CharacterFact:
@@ -245,7 +245,7 @@ class NovelForgeEngine:
         """对指定章节执行评审：从向量存储召回记忆、获取长篇上下文，调用 Critic 代理生成评审报告。"""
         story = self._require_story()
         outline = story.get_outline(chapter_index)
-        chapter = story.chapters.get(chapter_index)
+        chapter = story.content.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
             raise WorkflowError(f"Chapter {chapter_index} has no draft to review.")
         memories = self.vector_store.query(
@@ -258,7 +258,7 @@ class NovelForgeEngine:
         report = self.critic.review_chapter(
             chapter.content,
             outline,
-            list(story.characters.values()),
+            list(story.content.characters.values()),
             memories,
             longform_context,
         )
@@ -276,7 +276,7 @@ class NovelForgeEngine:
     def validate_chapter_contract(self, chapter_index: int) -> list:
         """对章节合同执行规则与语义联合验收，返回逐项证据。"""
         story = self._require_story()
-        chapter = story.chapters.get(chapter_index)
+        chapter = story.content.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
             raise WorkflowError(f"Chapter {chapter_index} has no content to validate.")
         contract = self.ensure_chapter_contract(chapter_index)
@@ -286,7 +286,7 @@ class NovelForgeEngine:
     def audit_chapter_continuity(self, chapter_index: int) -> ContinuityAuditReport:
         """对指定章节进行连续性审计，检查长篇小说的一致性，返回风险评分和审计报告。"""
         story = self._require_story()
-        chapter = story.chapters.get(chapter_index)
+        chapter = story.content.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
             raise WorkflowError(f"Chapter {chapter_index} has no content to audit.")
         outline = None
@@ -297,7 +297,7 @@ class NovelForgeEngine:
         query = outline.summary if outline else chapter.summary or chapter.title
         longform_context = self.longform_manager.get_enhanced_context(chapter_index, story, query=query)
         report = self.continuity_auditor.audit_chapter(story, chapter_index, chapter.content, longform_context)
-        story.continuity_reports[chapter_index] = report
+        self.quality_service.save_continuity_report(story, chapter_index, report)
         story.touch()
         self.save_state()
         return report
@@ -314,7 +314,7 @@ class NovelForgeEngine:
             raise WorkflowError("end_chapter must be >= start_chapter")
         query = character_query.strip().lower()
         matches = [
-            character for character in story.characters.values()
+            character for character in story.content.characters.values()
             if query in {character.id.lower(), character.name.lower()}
         ]
         if not matches:
@@ -324,15 +324,7 @@ class NovelForgeEngine:
         report = self.character_arc_auditor.audit(
             story, matches[0], start_chapter, end_chapter
         )
-        story.character_continuity_reports = [
-            item for item in story.character_continuity_reports
-            if not (
-                item.character_id == report.character_id
-                and item.start_chapter == start_chapter
-                and item.end_chapter == end_chapter
-            )
-        ]
-        story.character_continuity_reports.append(report)
+        self.quality_service.save_character_continuity_report(story, report)
         story.touch()
         self.save_state()
         return report
@@ -345,7 +337,7 @@ class NovelForgeEngine:
     ) -> Chapter:
         """对指定章节应用修订：若未提供 revised_content 则用 Editor 代理基于评审报告自动修订。"""
         story = self._require_story()
-        chapter = story.chapters.get(chapter_index)
+        chapter = story.content.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
             raise WorkflowError(f"Chapter {chapter_index} has no content to revise.")
         report = self.last_review.get(chapter_index) or self.request_review(chapter_index)
@@ -365,7 +357,7 @@ class NovelForgeEngine:
     def create_revision_proposal(self, chapter_index: int, instruction: str) -> RevisionProposal:
         """生成并验收修订候选，但不覆盖正式章节正文。"""
         story = self._require_story()
-        chapter = story.chapters.get(chapter_index)
+        chapter = story.content.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
             raise WorkflowError(f"Chapter {chapter_index} has no content to revise.")
         clean_instruction = instruction.strip()
@@ -375,7 +367,7 @@ class NovelForgeEngine:
         review = self.last_review.get(chapter_index) or self.critic.review_chapter(
             chapter.content,
             outline,
-            list(story.characters.values()),
+            list(story.content.characters.values()),
             [],
             "",
         )
@@ -388,7 +380,7 @@ class NovelForgeEngine:
         validation = self.critic.review_chapter(
             candidate,
             outline,
-            list(story.characters.values()),
+            list(story.content.characters.values()),
             [],
             "",
         )
@@ -419,7 +411,7 @@ class NovelForgeEngine:
             raise WorkflowError(f"Revision proposal not found: {proposal_id}")
         if proposal.status != "awaiting_approval":
             raise WorkflowError(f"Revision proposal is already {proposal.status}.")
-        chapter = story.chapters.get(proposal.chapter_index)
+        chapter = story.content.chapters.get(proposal.chapter_index)
         if chapter is None or chapter.version != proposal.source_version:
             raise WorkflowError("Chapter changed after this proposal was created; generate a new proposal.")
         chapter.update_content(proposal.proposed_content, status="revised", summary=chapter.summary)
@@ -429,7 +421,7 @@ class NovelForgeEngine:
         self._process_chapter_memory(story, chapter)
         story.touch()
         self.save_state()
-        for run in story.agent_trace_runs:
+        for run in story.agent_runs.director:
             if proposal_id in run.proposal_ids and run.status == "awaiting_approval":
                 run.status = "paused"
                 if run.plan is not None:
@@ -448,7 +440,7 @@ class NovelForgeEngine:
         proposal.status = "rejected"
         proposal.updated_at = utc_now()
         story = self._require_story()
-        for run in story.agent_trace_runs:
+        for run in story.agent_runs.director:
             if proposal_id in run.proposal_ids and run.status == "awaiting_approval":
                 run.status = "rejected"
                 run.final_summary = "User rejected the revision proposal; the official chapter was unchanged."
@@ -467,7 +459,7 @@ class NovelForgeEngine:
         if not feedback:
             raise WorkflowError("Revision feedback cannot be empty.")
         story = self._require_story()
-        linked_runs = [run for run in story.agent_trace_runs if proposal_id in run.proposal_ids]
+        linked_runs = [run for run in story.agent_runs.director if proposal_id in run.proposal_ids]
         combined = f"{old.instruction}\n用户追加要求：{feedback}"
         self.reject_revision_proposal(proposal_id)
         new_proposal = self.create_revision_proposal(old.chapter_index, combined)
@@ -496,15 +488,14 @@ class NovelForgeEngine:
             outline = story.get_outline(chapter_index)
         except KeyError:
             outline = None
-        chapter = story.chapters.get(chapter_index) or Chapter(
+        chapter = story.content.chapters.get(chapter_index) or Chapter(
             index=chapter_index,
             title=title or (outline.title if outline else f"Chapter {chapter_index}"),
         )
         if title:
             chapter.title = title
         chapter.update_content(content, status=status, summary=chapter.summary or (outline.summary if outline else ""))
-        story.chapters[chapter_index] = chapter
-        story.current_chapter = chapter_index
+        self.content_service.save_chapter(story, chapter)
         story.status = WorkflowState.CHAPTER_DRAFT.value if status == "draft" else story.status
         self._process_chapter_memory(story, chapter)
         story.touch()
@@ -520,7 +511,7 @@ class NovelForgeEngine:
         story = self._require_story()
         outline = story.get_outline(chapter_index)
         self.ensure_chapter_contract(chapter_index)
-        chapter = story.chapters.get(chapter_index)
+        chapter = story.content.chapters.get(chapter_index)
         if chapter is None or not chapter.beats:
             chapter = self.generate_beats(chapter_index)
 
@@ -555,15 +546,14 @@ class NovelForgeEngine:
         self.auto_status = "running"
         result = self.current_auto_revisor.run(chapter_index, continuity_issues=continuity_issues or None)
 
-        chapter = story.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
+        chapter = story.content.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
         chapter.update_content(
             result.final_content,
             status="revised" if result.passed else "reviewed",
             summary=chapter.summary or outline.summary,
         )
-        story.chapters[chapter_index] = chapter
-        story.current_chapter = chapter_index
-        story.auto_revision_reports[chapter_index] = result
+        self.content_service.save_chapter(story, chapter)
+        self.quality_service.save_auto_revision_report(story, chapter_index, result)
         story.status = WorkflowState.CHAPTER_FINALIZED.value if result.passed else WorkflowState.REVISING.value
         self._process_chapter_memory(story, chapter)
         story.touch()
@@ -603,7 +593,7 @@ class NovelForgeEngine:
                 }
             )
 
-        if len(story.outlines) < end_chapter:
+        if len(story.content.outlines) < end_chapter:
             emit_progress(
                 f"Generating outline up to chapter {end_chapter}",
                 stage="outline",
@@ -617,7 +607,7 @@ class NovelForgeEngine:
         )
         for chapter_index in range(start_chapter, end_chapter + 1):
             try:
-                chapter = story.chapters.get(chapter_index)
+                chapter = story.content.chapters.get(chapter_index)
                 if chapter is None or not chapter.beats:
                     emit_progress(
                         f"Chapter {chapter_index}: generating beats",
@@ -634,7 +624,7 @@ class NovelForgeEngine:
                         progress_current=report.completed,
                     )
                     auto_report = self.auto_write_chapter(chapter_index)
-                    chapter = story.chapters[chapter_index]
+                    chapter = story.content.chapters[chapter_index]
                     report.results.append(
                         BatchChapterResult(
                             chapter_index=chapter_index,
@@ -898,7 +888,7 @@ class NovelForgeEngine:
         """根据任务对象中的 action 字段执行对应的引擎操作（大纲、节拍、写作、审计、记忆等），返回结果摘要。"""
         story = self._require_story()
         if task.action == "ensure_outline":
-            before = len(story.outlines)
+            before = len(story.content.outlines)
             if before < end_chapter:
                 self._ensure_outlines(end_chapter)
                 return f"Generated outlines through chapter {end_chapter}."
@@ -918,13 +908,13 @@ class NovelForgeEngine:
             report = self.audit_chapter_continuity(task.chapter_index)
             return f"Continuity risk {report.risk_score:.1f}; passed={report.passed}."
         if task.action == "memory_checkpoint":
-            chapter = story.chapters.get(task.chapter_index)
+            chapter = story.content.chapters.get(task.chapter_index)
             if chapter is None or not chapter.content:
                 raise WorkflowError(f"Chapter {task.chapter_index} has no content to index.")
             self._process_chapter_memory(story, chapter)
             return (
-                f"Memory updated: {len(story.memory_cards)} cards, "
-                f"{len(story.chapter_summaries)} chapter summaries."
+                f"Memory updated: {len(story.memory.cards)} cards, "
+                f"{len(story.memory.chapter_summaries)} chapter summaries."
             )
         raise WorkflowError(f"Unknown agent task action: {task.action}")
 
@@ -978,10 +968,10 @@ class NovelForgeEngine:
     def finalize_chapter(self, chapter_index: int) -> Chapter:
         """将章节标记为终稿状态，触发记忆处理，若为最后一章则标记整个故事已完成。"""
         story = self._require_story()
-        chapter = story.chapters[chapter_index]
+        chapter = story.content.chapters[chapter_index]
         chapter.status = "finalized"
         story.status = WorkflowState.CHAPTER_FINALIZED.value
-        if chapter_index >= len(story.outlines):
+        if chapter_index >= len(story.content.outlines):
             story.status = WorkflowState.COMPLETED.value
         if chapter.content:
             self._process_chapter_memory(story, chapter)
@@ -993,7 +983,7 @@ class NovelForgeEngine:
         """推进到下一章并生成节拍；若已是最后一章则标记故事完成并抛出异常。"""
         story = self._require_story()
         next_index = max(story.current_chapter + 1, 1)
-        if next_index > len(story.outlines):
+        if next_index > len(story.content.outlines):
             story.status = WorkflowState.COMPLETED.value
             self.save_state()
             raise WorkflowError("Story is completed; no next chapter exists.")
@@ -1009,14 +999,14 @@ class NovelForgeEngine:
 
     def _append_missing_outlines(self, story: Story, target_count: int) -> None:
         """若现有大纲数量不足 target_count，补生成缺失的章节并追加到故事大纲列表中。"""
-        existing_count = len(story.outlines)
+        existing_count = len(story.content.outlines)
         if existing_count >= target_count:
             return
         missing_count = target_count - existing_count
         generated = self.planner.generate_outline(story.premise, missing_count)
         for offset, outline in enumerate(generated[:missing_count], start=1):
             real_index = existing_count + offset
-            story.outlines.append(self._renumber_outline(outline, real_index))
+            self.content_service.append_outlines(story, [self._renumber_outline(outline, real_index)])
 
     def _renumber_outline(self, outline: ChapterOutline, chapter_index: int) -> ChapterOutline:
         """重新编号大纲项，更改 chapter_index 为目标值后返回副本。"""
@@ -1047,8 +1037,8 @@ class NovelForgeEngine:
             story.id, "exports", f"{self._safe_export_filename(story.title)}.md"
         )
         lines = [f"# {story.title}", "", f"> {story.premise}", ""]
-        for index in sorted(story.chapters):
-            chapter = story.chapters[index]
+        for index in sorted(story.content.chapters):
+            chapter = story.content.chapters[index]
             lines.extend([f"## {chapter.title}", "", chapter.content, ""])
         output.write_text("\n".join(lines), encoding="utf-8")
         return output
@@ -1083,8 +1073,8 @@ class NovelForgeEngine:
 
         doc.add_paragraph()
 
-        for idx in sorted(story.chapters):
-            chapter = story.chapters[idx]
+        for idx in sorted(story.content.chapters):
+            chapter = story.content.chapters[idx]
             if chapter.content:
                 heading = doc.add_heading(chapter.title, level=1)
                 for run in heading.runs:
@@ -1108,7 +1098,7 @@ class NovelForgeEngine:
     def export_auto_revision_report(self, chapter_index: int, output_path: str | Path | None = None) -> Path:
         """导出指定章节的自动修订报告到文件，若不存在则抛出 WorkflowError。"""
         story = self._require_story()
-        report = story.auto_revision_reports.get(chapter_index)
+        report = story.quality.auto_revision_reports.get(chapter_index)
         if report is None:
             raise WorkflowError(f"No auto-revision report for chapter {chapter_index}.")
         return self.repository.export_auto_revision_report(story, report, output_path)
@@ -1141,11 +1131,11 @@ class NovelForgeEngine:
         self.text_store.delete_story(story_id_str)
         self.graph_store.delete_story(story_id_str)
         indexed_chapters = 0
-        for chapter in story.chapters.values():
+        for chapter in story.content.chapters.values():
             if chapter.content:
                 self._index_chapter(story, chapter)
                 indexed_chapters += 1
-        cards = story.memory_cards
+        cards = story.memory.cards
         if cards:
             self.vector_store.add(
                 "memory_cards",
@@ -1163,7 +1153,7 @@ class NovelForgeEngine:
                 ],
                 [card.id if card.id.startswith(f"{story_id_str}:") else f"{story_id_str}:memory_card:{card.id}" for card in cards],
             )
-        characters = list(story.characters.values())
+        characters = list(story.content.characters.values())
         if characters:
             self.vector_store.add(
                 "characters",
@@ -1178,7 +1168,7 @@ class NovelForgeEngine:
                 attrs = character.model_dump()
                 attrs["story_id"] = story_id_str
                 self.graph_store.add_node(f"{story_id_str}:character:{character.id}", attrs)
-        world_settings = story.world_settings
+        world_settings = story.content.world_settings
         if world_settings:
             self.vector_store.add(
                 "world",
@@ -1254,7 +1244,7 @@ class NovelForgeEngine:
         query = outline.summary if outline else chapter.summary or chapter.title
         longform_context = self.longform_manager.get_enhanced_context(chapter.index, story, query=query)
         report = self.continuity_auditor.audit_chapter(story, chapter.index, chapter.content, longform_context)
-        story.continuity_reports[chapter.index] = report
+        self.quality_service.save_continuity_report(story, chapter.index, report)
 
     def _index_extracted_memory(self, story: Story, extraction) -> None:
         """将从章节中提取的角色、世界观和关系数据写入向量存储和图存储。"""

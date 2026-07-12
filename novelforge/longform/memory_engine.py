@@ -78,12 +78,12 @@ class MemoryEngineV2:
         arc = self.update_arc_summary(story, chapter_index)
         self.update_story_bible(story, chapter_index)
         self._trim_cards(story)
-        return {"memory_cards": cards, "arc_summary": arc, "story_bible": story.story_bible}
+        return {"memory_cards": cards, "arc_summary": arc, "story_bible": story.memory.story_bible}
 
     def build_context_pack(self, story: Story, chapter_index: int, query: str = "") -> ChapterContextPack:
         """组装章节上下文包，聚合故事圣经、弧信息、卷信息、近期摘要、角色状态、伏笔、因果和检索卡片。"""
         pack = ChapterContextPack(chapter_index=chapter_index)
-        bible = story.story_bible
+        bible = story.memory.story_bible
         if bible.core_premise or story.premise:
             pack.story_bible = "\n".join(
                 line
@@ -96,19 +96,19 @@ class MemoryEngineV2:
             )
 
         arc_index = self._arc_index(chapter_index)
-        arc = next((item for item in story.arc_summaries if item.arc == arc_index), None)
+        arc = next((item for item in story.memory.arc_summaries if item.arc == arc_index), None)
         if arc and arc.chapter_range[1] < chapter_index:
             pack.current_arc = f"Arc {arc.arc} ch{arc.chapter_range[0]}-{arc.chapter_range[1]}: {arc.summary}"
 
         volume = max(1, (chapter_index - 1) // 10 + 1)
-        volume_summary = next((item for item in story.volume_summaries if item.volume == volume), None)
+        volume_summary = next((item for item in story.memory.volume_summaries if item.volume == volume), None)
         if volume_summary and volume_summary.chapter_range[1] < chapter_index:
             pack.current_volume = f"Volume {volume_summary.volume} ch{volume_summary.chapter_range[0]}-{volume_summary.chapter_range[1]}: {volume_summary.summary}"
 
         recent = [
-            story.chapter_summaries[index]
+            story.memory.chapter_summaries[index]
             for index in range(max(1, chapter_index - 5), chapter_index)
-            if index in story.chapter_summaries
+            if index in story.memory.chapter_summaries
         ]
         pack.recent_summaries = [f"ch{item.chapter_index}: {item.chapter_summary}" for item in recent]
 
@@ -118,7 +118,7 @@ class MemoryEngineV2:
         pack.causal_threads = [
             f"{event.id}@ch{event.chapter}: {event.description}"
             for event in sorted(
-                (item for item in story.causal_events if item.chapter < chapter_index),
+                (item for item in story.memory.causal_events if item.chapter < chapter_index),
                 key=lambda item: item.chapter,
             )[-12:]
         ]
@@ -158,27 +158,27 @@ class MemoryEngineV2:
         limit: int = 12,
     ) -> list[MemoryCard]:
         """通过 MemoryRanker 对 memory_cards 排序后返回 top-limit 条卡片。"""
-        ranked = self.ranker.rank_cards(story.memory_cards, query, chapter_index, entities=entities, limit=limit)
+        ranked = self.ranker.rank_cards(story.memory.cards, query, chapter_index, entities=entities, limit=limit)
         return [item.item for item in ranked]
 
     def update_arc_summary(self, story: Story, chapter_index: int) -> ArcSummary:
         """更新当前章节所属故事弧的摘要。
 
-        聚合该弧内章节摘要和因果事件，压缩后写入 story.arc_summaries 并返回 ArcSummary。
+        聚合该弧内章节摘要和因果事件，压缩后写入 story.memory.arc_summaries 并返回 ArcSummary。
         """
         arc_index = self._arc_index(chapter_index)
         start = (arc_index - 1) * self.chapters_per_arc + 1
         end = arc_index * self.chapters_per_arc
-        summaries = [story.chapter_summaries[index] for index in range(start, end + 1) if index in story.chapter_summaries]
+        summaries = [story.memory.chapter_summaries[index] for index in range(start, end + 1) if index in story.memory.chapter_summaries]
         text = " ".join(item.chapter_summary for item in summaries)
         events = [
             event.description
-            for event in story.causal_events
+            for event in story.memory.causal_events
             if start <= event.chapter <= end
         ][-8:]
         pending = [
             item.description
-            for item in story.foreshadowings
+            for item in story.memory.foreshadowings
             if item.status == "pending" and start <= item.created_chapter <= end
         ][-8:]
         summary = compress(" ".join([text] + events), 900)
@@ -189,9 +189,9 @@ class MemoryEngineV2:
             key_threads=events,
             open_questions=pending,
         )
-        story.arc_summaries = [item for item in story.arc_summaries if item.arc != arc_index]
-        story.arc_summaries.append(arc)
-        story.arc_summaries.sort(key=lambda item: item.arc)
+        story.memory.arc_summaries = [item for item in story.memory.arc_summaries if item.arc != arc_index]
+        story.memory.arc_summaries.append(arc)
+        story.memory.arc_summaries.sort(key=lambda item: item.arc)
         return arc
 
     def update_story_bible(self, story: Story, chapter_index: int) -> None:
@@ -199,30 +199,30 @@ class MemoryEngineV2:
 
         刷新核心前提、风格、当前方向、活跃线索、角色名册和连续性约束。
         """
-        bible = story.story_bible
+        bible = story.memory.story_bible
         bible.core_premise = story.premise
         bible.style_guide = story.style_guide
-        latest_arc = max(story.arc_summaries, key=lambda item: item.arc, default=None)
-        latest_summary = story.chapter_summaries.get(chapter_index)
+        latest_arc = max(story.memory.arc_summaries, key=lambda item: item.arc, default=None)
+        latest_summary = story.memory.chapter_summaries.get(chapter_index)
         bible.current_direction = compress(
             latest_summary.chapter_summary if latest_summary else (latest_arc.summary if latest_arc else story.premise),
             600,
         )
         bible.active_threads = dedupe(
-            [item.description for item in story.foreshadowings if item.status == "pending"][-20:]
-            + [event.description for event in sorted(story.causal_events, key=lambda item: item.chapter)[-12:]]
+            [item.description for item in story.memory.foreshadowings if item.status == "pending"][-20:]
+            + [event.description for event in sorted(story.memory.causal_events, key=lambda item: item.chapter)[-12:]]
         )[:24]
         bible.character_roster = {}
-        for character_id, character in story.characters.items():
-            current = max(story.character_states.get(character_id, []), key=lambda item: item.chapter, default=None)
+        for character_id, character in story.content.characters.items():
+            current = max(story.memory.states.get(character_id, []), key=lambda item: item.chapter, default=None)
             state = ""
             if current:
                 state = f"ch{current.chapter}: {current.emotional_state}; {current.location}"
             bible.character_roster[character_id] = compress(f"{character.name} {state}".strip(), 240)
         bible.continuity_constraints = dedupe(
             bible.continuity_constraints
-            + [f"Keep foreshadowing open until resolved: {item.id} {item.description}" for item in story.foreshadowings if item.status == "pending"][-20:]
-            + [f"Respect latest state of {cid}: {states[-1].emotional_state}, {states[-1].location}" for cid, states in story.character_states.items() if states]
+            + [f"Keep foreshadowing open until resolved: {item.id} {item.description}" for item in story.memory.foreshadowings if item.status == "pending"][-20:]
+            + [f"Respect latest state of {cid}: {states[-1].emotional_state}, {states[-1].location}" for cid, states in story.memory.states.items() if states]
         )[:30]
         bible.updated_at = datetime.now(timezone.utc)
 
@@ -284,18 +284,18 @@ class MemoryEngineV2:
                     tags=["character_state"],
                 )
             )
-        existing = {card.id: card for card in story.memory_cards if card.chapter != chapter_index}
+        existing = {card.id: card for card in story.memory.cards if card.chapter != chapter_index}
         for card in cards:
             existing[card.id] = card
-        story.memory_cards = sorted(existing.values(), key=lambda item: (item.chapter, item.importance))
+        story.memory.cards = sorted(existing.values(), key=lambda item: (item.chapter, item.importance))
         return cards
 
     def _trim_cards(self, story: Story) -> None:
         """当卡片数超过 max_cards 时按重要性+章节排序后裁剪。"""
-        if len(story.memory_cards) <= self.max_cards:
+        if len(story.memory.cards) <= self.max_cards:
             return
-        story.memory_cards = sorted(story.memory_cards, key=lambda item: (item.importance, item.chapter), reverse=True)[: self.max_cards]
-        story.memory_cards.sort(key=lambda item: (item.chapter, item.importance))
+        story.memory.cards = sorted(story.memory.cards, key=lambda item: (item.importance, item.chapter), reverse=True)[: self.max_cards]
+        story.memory.cards.sort(key=lambda item: (item.chapter, item.importance))
 
     def _query_entities(self, story: Story, chapter_index: int, query: str) -> set[str]:
         """从大纲和查询中推断相关角色实体集合。"""
@@ -307,30 +307,30 @@ class MemoryEngineV2:
             query += " " + " ".join([outline.title, outline.summary, outline.conflict, outline.pov_character or ""])
         except KeyError:
             pass
-        for character_id, character in story.characters.items():
+        for character_id, character in story.content.characters.items():
             if character_id in query or (character.name and character.name in query):
                 entities.add(character_id)
         return entities
 
     def _format_character_states(self, story: Story, entities: set[str], chapter_index: int) -> list[str]:
         """格式化指定实体（或全部角色）的当前状态为可读字符串列表。"""
-        candidates = entities or set(story.characters.keys())
+        candidates = entities or set(story.content.characters.keys())
         rows: list[str] = []
         for character_id in sorted(candidates):
             current = max(
-                (item for item in story.character_states.get(character_id, []) if item.chapter < chapter_index),
+                (item for item in story.memory.states.get(character_id, []) if item.chapter < chapter_index),
                 key=lambda item: item.chapter,
                 default=None,
             )
             if current:
-                name = story.characters.get(character_id).name if character_id in story.characters else character_id
+                name = story.content.characters.get(character_id).name if character_id in story.content.characters else character_id
                 rows.append(f"{name}: {self._format_state(current)}")
         return rows[:12]
 
     def _format_pending_foreshadowings(self, story: Story, chapter_index: int, entities: set[str]) -> list[str]:
         """格式化未回收伏笔列表，按与当前章节的距离排序。"""
         pending = [
-            item for item in story.foreshadowings
+            item for item in story.memory.foreshadowings
             if item.status == "pending" and item.created_chapter < chapter_index
         ]
         pending.sort(key=lambda item: ((item.target_chapter or chapter_index + 999) - chapter_index, -item.created_chapter))

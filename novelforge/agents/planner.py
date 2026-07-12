@@ -68,7 +68,7 @@ class PlannerAgent(BaseAgent):
             "generate_chapter_contract\n"
             f"故事前提: {story.premise}\n"
             f"章节大纲: {chapter_outline.model_dump_json()}\n"
-            f"当前故事线: {story.story_bible.active_threads}\n"
+            f"当前故事线: {story.memory.story_bible.active_threads}\n"
             f"文风: {story.style_guide}\n只输出 JSON。"
         )
         try:
@@ -80,7 +80,7 @@ class PlannerAgent(BaseAgent):
                 chapter_index=chapter_outline.chapter_index,
                 pov_character=chapter_outline.pov_character,
                 must_happen=[chapter_outline.summary],
-                active_threads=list(story.story_bible.active_threads),
+                active_threads=list(story.memory.story_bible.active_threads),
                 style_requirements=[story.style_guide] if story.style_guide else [],
                 notes=f"核心冲突：{chapter_outline.conflict}",
             )

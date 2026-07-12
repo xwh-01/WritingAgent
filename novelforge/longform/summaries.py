@@ -39,11 +39,11 @@ class SummaryManager(ISummaryManager):
         self.chapters_per_volume = chapters_per_volume
 
     def generate_chapter_summary(self, story: Story, chapter_index: int, content: str) -> ChapterSummary:
-        """生成单章摘要并存入 story.chapter_summaries，优先使用 LLM，失败则回退到规则方法。"""
+        """生成单章摘要并存入 story.memory.chapter_summaries，优先使用 LLM，失败则回退到规则方法。"""
         summary = self._llm_summary(chapter_index, content) if self.llm else None
         if summary is None:
             summary = self._rule_summary(chapter_index, content)
-        story.chapter_summaries[chapter_index] = summary
+        story.memory.chapter_summaries[chapter_index] = summary
         return summary
 
     def generate_volume_summary(self, story: Story, volume: int, chapter_indices: list[int] | None = None) -> VolumeSummary:
@@ -52,7 +52,7 @@ class SummaryManager(ISummaryManager):
             start = (volume - 1) * self.chapters_per_volume + 1
             end = volume * self.chapters_per_volume
             chapter_indices = list(range(start, end + 1))
-        available = [story.chapter_summaries[index] for index in chapter_indices if index in story.chapter_summaries]
+        available = [story.memory.chapter_summaries[index] for index in chapter_indices if index in story.memory.chapter_summaries]
         if available:
             text = " ".join(item.chapter_summary for item in available)
             summary_text = compress(text, 500)
@@ -61,21 +61,21 @@ class SummaryManager(ISummaryManager):
             summary_text = ""
             chapter_range = (chapter_indices[0], chapter_indices[-1]) if chapter_indices else (1, 1)
         volume_summary = VolumeSummary(volume=volume, chapter_range=chapter_range, summary=summary_text)
-        story.volume_summaries = [item for item in story.volume_summaries if item.volume != volume]
-        story.volume_summaries.append(volume_summary)
-        story.volume_summaries.sort(key=lambda item: item.volume)
+        story.memory.volume_summaries = [item for item in story.memory.volume_summaries if item.volume != volume]
+        story.memory.volume_summaries.append(volume_summary)
+        story.memory.volume_summaries.sort(key=lambda item: item.volume)
         return volume_summary
 
     def get_rolling_context(self, story: Story, current_chapter: int, window: int = 3) -> str:
         """返回最近 window 章的滚动上下文，含最近章节摘要、当前卷概要和全书主线概要。"""
         previous = [
-            story.chapter_summaries[index]
+            story.memory.chapter_summaries[index]
             for index in range(max(1, current_chapter - window), current_chapter)
-            if index in story.chapter_summaries
+            if index in story.memory.chapter_summaries
         ]
         volume = max(1, (current_chapter - 1) // self.chapters_per_volume + 1)
-        volume_summary = next((item for item in story.volume_summaries if item.volume == volume), None)
-        all_book = compress(" ".join(item.summary for item in story.volume_summaries), 700)
+        volume_summary = next((item for item in story.memory.volume_summaries if item.volume == volume), None)
+        all_book = compress(" ".join(item.summary for item in story.memory.volume_summaries), 700)
         lines = ["长篇滚动记忆:"]
         if previous:
             lines.append("最近章节摘要:")

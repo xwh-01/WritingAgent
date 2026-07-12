@@ -42,11 +42,11 @@ class CausalityTracker(ICausalityTracker):
         """注册因果事件并自动为相关事件建立 causes/effects 双向引用边。"""
         if not event.id:
             event.id = f"ev-{uuid4().hex[:8]}"
-        existing_ids = {item.id for item in story.causal_events}
+        existing_ids = {item.id for item in story.memory.causal_events}
         if event.id not in existing_ids:
-            story.causal_events.append(event)
+            story.memory.causal_events.append(event)
         for cause_id in event.causes:
-            for cause in story.causal_events:
+            for cause in story.memory.causal_events:
                 if cause.id == cause_id and event.id not in cause.effects:
                     cause.effects.append(event.id)
         return event
@@ -54,7 +54,7 @@ class CausalityTracker(ICausalityTracker):
     def check_conflicts(self, story: Story, new_event: CausalEvent) -> list[str]:
         """检查新事件的前因是否存在、时间顺序是否合理、是否会引入因果循环。"""
         issues: list[str] = []
-        by_id = {event.id: event for event in story.causal_events}
+        by_id = {event.id: event for event in story.memory.causal_events}
         for cause_id in new_event.causes:
             cause = by_id.get(cause_id)
             if cause is None:
@@ -67,7 +67,7 @@ class CausalityTracker(ICausalityTracker):
 
     def extract_events_from_chapter(self, story: Story, chapter_index: int, content: str) -> list[CausalEvent]:
         """从章节中提取因果事件，先清除该章节旧事件，再用 LLM 或规则补充。"""
-        story.causal_events = [event for event in story.causal_events if event.chapter != chapter_index]
+        story.memory.causal_events = [event for event in story.memory.causal_events if event.chapter != chapter_index]
         events = self._llm_extract(chapter_index, content) if self.llm else []
         if not events:
             events = self._rule_extract(chapter_index, content)
@@ -79,7 +79,7 @@ class CausalityTracker(ICausalityTracker):
 
     def get_related_chain(self, story: Story, event_id: str, depth: int = 2) -> dict[str, list[dict]]:
         """BFS 搜索指定事件的因果链，返回 depth 层内所有关联事件。"""
-        by_id = {event.id: event for event in story.causal_events}
+        by_id = {event.id: event for event in story.memory.causal_events}
         if event_id not in by_id:
             return {"events": []}
         seen = {event_id}
@@ -147,7 +147,7 @@ class CausalityTracker(ICausalityTracker):
     def _has_cycle(self, story: Story, new_event: CausalEvent) -> bool:
         """用 DFS 三色标记法检测添加 new_event 后是否会形成因果循环。"""
         edges = defaultdict(list)
-        for event in story.causal_events + [new_event]:
+        for event in story.memory.causal_events + [new_event]:
             for cause_id in event.causes:
                 edges[cause_id].append(event.id)
 

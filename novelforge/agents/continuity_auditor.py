@@ -37,9 +37,9 @@ class ContinuityAuditorAgent(BaseAgent):
             "continuity_audit\n"
             f"chapter={chapter_index}\n"
             f"outline={outline.model_dump_json() if outline else '{}'}\n"
-            f"story_bible={story.story_bible.model_dump_json()}\n"
-            f"pending_foreshadowing={json.dumps([f.model_dump() for f in story.foreshadowings if f.status == 'pending'], ensure_ascii=False)}\n"
-            f"character_states={json.dumps(story.character_states, default=str, ensure_ascii=False)}\n"
+            f"story_bible={story.memory.story_bible.model_dump_json()}\n"
+            f"pending_foreshadowing={json.dumps([f.model_dump() for f in story.memory.foreshadowings if f.status == 'pending'], ensure_ascii=False)}\n"
+            f"character_states={json.dumps(story.memory.states, default=str, ensure_ascii=False)}\n"
             f"longform_context={longform_context[:6000]}\n"
             f"content={content[:12000]}"
         )
@@ -61,9 +61,9 @@ class ContinuityAuditorAgent(BaseAgent):
     ) -> ContinuityAuditReport:
         """基于规则的连续性审计兜底：检查伏笔到期、冲突体现、约束遵守、位置跳变。"""
         issues: list[ContinuityIssue] = []
-        checked = list(story.story_bible.continuity_constraints[:20])
+        checked = list(story.memory.story_bible.continuity_constraints[:20])
 
-        for item in story.foreshadowings:
+        for item in story.memory.foreshadowings:
             if item.status == "pending" and item.target_chapter is not None and item.target_chapter <= chapter_index:
                 issues.append(
                     ContinuityIssue(
@@ -102,7 +102,7 @@ class ContinuityAuditorAgent(BaseAgent):
                         )
                     )
 
-        for character_id, states in story.character_states.items():
+        for character_id, states in story.memory.states.items():
             previous = max((state for state in states if state.chapter < chapter_index), key=lambda item: item.chapter, default=None)
             current = max((state for state in states if state.chapter == chapter_index), key=lambda item: item.chapter, default=None)
             if previous and current and previous.location and current.location and previous.location != current.location:

@@ -83,14 +83,14 @@ class CharacterStateTracker(ICharacterStateTracker):
 
     def update_state(self, story: Story, chapter_index: int, character_id: str, new_state: CharacterState) -> None:
         """更新或覆盖指定角色在指定章节的状态快照。"""
-        states = [state for state in story.character_states.get(character_id, []) if state.chapter != chapter_index]
+        states = [state for state in story.memory.states.get(character_id, []) if state.chapter != chapter_index]
         states.append(new_state)
         states.sort(key=lambda item: item.chapter)
-        story.character_states[character_id] = states
+        story.memory.states[character_id] = states
 
     def get_current_state(self, story: Story, character_id: str) -> CharacterState | None:
         """返回该角色章节编号最大的状态，无记录时返回 None。"""
-        states = story.character_states.get(character_id, [])
+        states = story.memory.states.get(character_id, [])
         return max(states, key=lambda item: item.chapter) if states else None
 
     def extract_state_from_chapter(self, story: Story, chapter_index: int, content: str, characters: list[Character]) -> list[CharacterState]:

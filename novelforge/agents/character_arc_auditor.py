@@ -28,13 +28,13 @@ class CharacterArcAuditorAgent(BaseAgent):
         end_chapter: int,
     ) -> CharacterContinuityReport:
         states = [
-            state for state in story.character_states.get(character.id, [])
+            state for state in story.memory.states.get(character.id, [])
             if start_chapter <= state.chapter <= end_chapter
         ]
         states.sort(key=lambda item: item.chapter)
         excerpts = []
         for chapter_index in range(start_chapter, end_chapter + 1):
-            chapter = story.chapters.get(chapter_index)
+            chapter = story.content.chapters.get(chapter_index)
             if chapter and chapter.content:
                 excerpts.append({"chapter": chapter_index, "content": chapter.content[:3000]})
         payload = {
@@ -43,7 +43,7 @@ class CharacterArcAuditorAgent(BaseAgent):
             "chapter_range": [start_chapter, end_chapter],
             "states": [state.model_dump() for state in states],
             "confirmed_facts": [
-                fact.model_dump() for fact in story.character_facts
+                fact.model_dump() for fact in story.memory.facts
                 if fact.character_id == character.id and fact.user_confirmed
             ],
             "chapter_excerpts": excerpts,

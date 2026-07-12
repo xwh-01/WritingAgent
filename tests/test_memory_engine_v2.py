@@ -12,7 +12,7 @@ from novelforge.memory.text_store import SQLiteFTSStore
 
 def test_memory_engine_v2_builds_long_novel_memory() -> None:
     story = Story(title="Memory", premise="A goalkeeper grows across a thousand-chapter saga.")
-    story.characters["hero"] = Character(id="hero", name="Wang Shaokang")
+    story.content.characters["hero"] = Character(id="hero", name="Wang Shaokang")
     manager = LongformManager(MockLLMClient())
 
     result = manager.process_new_chapter(
@@ -24,9 +24,9 @@ def test_memory_engine_v2_builds_long_novel_memory() -> None:
     context = manager.get_enhanced_context(2, story)
 
     assert result["memory"]["memory_cards"]
-    assert story.memory_cards
-    assert story.arc_summaries
-    assert story.story_bible.core_premise == story.premise
+    assert story.memory.cards
+    assert story.memory.arc_summaries
+    assert story.memory.story_bible.core_premise == story.premise
     assert "Memory Engine v2 Context Pack" in context
     assert "Retrieved Memory Cards" in context
 
@@ -62,14 +62,14 @@ def test_engine_indexes_memory_cards_after_writing(test_config) -> None:
     context = engine.context_assembler.assemble_writing_context(2, story)
     retrieved = engine.vector_store.query("memory_cards", "sports saga secret training", k=5)
 
-    assert story.memory_cards
-    assert story.arc_summaries
-    assert story.characters
-    assert story.world_settings
+    assert story.memory.cards
+    assert story.memory.arc_summaries
+    assert story.content.characters
+    assert story.content.world_settings
     assert retrieved
     assert engine.vector_store.query("characters", "主角 training", k=5)
     # Verify graph store has character nodes (mock returns character id="protagonist")
-    char_id = next(iter(story.characters.keys()))
+    char_id = next(iter(story.content.characters.keys()))
     assert engine.graph_store.get_ego_network(f"{story.id}:character:{char_id}", depth=1)["nodes"]
     assert "Memory Engine v2 Context Pack" in context
     assert "score=" in context
@@ -126,16 +126,16 @@ def test_vector_query_enforces_chapter_visibility() -> None:
 
 def test_context_pack_does_not_expose_future_structured_state() -> None:
     story = Story(title="Temporal", premise="A mystery")
-    story.characters["hero"] = Character(id="hero", name="Hero")
-    story.character_states["hero"] = [
+    story.content.characters["hero"] = Character(id="hero", name="Hero")
+    story.memory.states["hero"] = [
         CharacterState(character_id="hero", chapter=1, location="station"),
         CharacterState(character_id="hero", chapter=6, location="moon"),
     ]
-    story.foreshadowings = [
+    story.memory.foreshadowings = [
         Foreshadowing(id="past", description="old key", created_chapter=1),
         Foreshadowing(id="future", description="future crown", created_chapter=7),
     ]
-    story.causal_events = [
+    story.memory.causal_events = [
         CausalEvent(id="past-event", chapter=1, description="door opened"),
         CausalEvent(id="future-event", chapter=9, description="world ended"),
     ]

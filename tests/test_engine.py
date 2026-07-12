@@ -24,8 +24,8 @@ def test_engine_core_workflow(test_config) -> None:
     revised = engine.apply_revision(1)
     assert revised.version == 3
     assert revised.history
-    assert engine.story.chapter_summaries[1]
-    assert engine.story.causal_events
+    assert engine.story.memory.chapter_summaries[1]
+    assert engine.story.memory.causal_events
 
 
 def test_engine_save_and_load(test_config) -> None:

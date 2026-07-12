@@ -283,7 +283,7 @@ class NovelDirectorAgent(BaseAgent):
             if not isinstance(issue, dict):
                 continue
             chapter = issue.get("chapter_index")
-            if isinstance(chapter, int) and chapter in story.chapters and story.chapters[chapter].content:
+            if isinstance(chapter, int) and chapter in story.content.chapters and story.content.chapters[chapter].content:
                 by_chapter.setdefault(chapter, []).append(issue)
         existing_chapters = {
             int(task.tool_args.get("chapter_index"))
@@ -314,7 +314,7 @@ class NovelDirectorAgent(BaseAgent):
     def _find_character(self, story: Story, text: str):
         lowered = text.lower()
         matches = [
-            character for character in story.characters.values()
+            character for character in story.content.characters.values()
             if character.name.lower() in lowered or character.id.lower() in lowered
         ]
         return matches[0] if len(matches) == 1 else None
@@ -329,20 +329,20 @@ class NovelDirectorAgent(BaseAgent):
         chapter = self._extract_chapter(text)
         if chapter is not None:
             return chapter, chapter
-        max_chapter = max(story.chapters.keys(), default=len(story.outlines) or 1)
+        max_chapter = max(story.content.chapters.keys(), default=len(story.content.outlines) or 1)
         return 1, max_chapter
 
     def _story_state(self, story: Story) -> dict:
         return {
             "story_id": str(story.id), "title": story.title, "status": story.status,
-            "current_chapter": story.current_chapter, "outline_count": len(story.outlines),
-            "chapters": [{"index": item.index, "status": item.status, "version": item.version, "has_content": bool(item.content)} for item in story.chapters.values()],
-            "characters": [item.name for item in story.characters.values()],
+            "current_chapter": story.current_chapter, "outline_count": len(story.content.outlines),
+            "chapters": [{"index": item.index, "status": item.status, "version": item.version, "has_content": bool(item.content)} for item in story.content.chapters.values()],
+            "characters": [item.name for item in story.content.characters.values()],
             "pending_foreshadowings": [
                 {"id": item.id, "description": item.description, "target_chapter": item.target_chapter}
-                for item in story.foreshadowings if item.status == "pending"
+                for item in story.memory.foreshadowings if item.status == "pending"
             ][:12],
-            "open_revision_proposals": len([item for item in story.revision_proposals if item.status == "awaiting_approval"]),
+            "open_revision_proposals": len([item for item in story.quality.revision_proposals if item.status == "awaiting_approval"]),
         }
 
     def _next_ready_task(self, plan: DirectorPlan) -> DirectorTask | None:
@@ -353,7 +353,7 @@ class NovelDirectorAgent(BaseAgent):
         chapter = self._safe_chapter(failed.tool_args, story)
         error_type = str(result.get("error_type") or "")
         if error_type == ERROR_PRECONDITION_MISSING:
-            if len(story.outlines) < chapter:
+            if len(story.content.outlines) < chapter:
                 return DirectorTask(description="补齐缺失章节大纲", selected_tool="create_outline", tool_args={"num_chapters": chapter}, success_criteria=["所需大纲存在"])
             return DirectorTask(description="补齐缺失场景节拍", selected_tool="create_beats", tool_args={"chapter_index": chapter}, success_criteria=["章节场景节拍存在"])
         return None
@@ -552,7 +552,7 @@ class NovelDirectorAgent(BaseAgent):
                 retry_count=failed.retry_count + 1,
             )
         if error_type == ERROR_PRECONDITION_MISSING:
-            if len(story.outlines) < chapter:
+            if len(story.content.outlines) < chapter:
                 return AgentDecision(
                     step=step,
                     intent="repair_missing_outline",
@@ -563,7 +563,7 @@ class NovelDirectorAgent(BaseAgent):
                     fallback_action=failed.selected_tool,
                     reflection=f"Recovered from missing precondition before {failed.selected_tool}: {error_message}",
                 )
-            chapter_state = story.chapters.get(chapter)
+            chapter_state = story.content.chapters.get(chapter)
             if chapter_state is None or not chapter_state.beats:
                 return AgentDecision(
                     step=step,
@@ -624,8 +624,8 @@ class NovelDirectorAgent(BaseAgent):
             "premise": story.premise,
             "status": story.status,
             "current_chapter": story.current_chapter,
-            "outline_count": len(story.outlines),
-            "chapter_count": len(story.chapters),
+            "outline_count": len(story.content.outlines),
+            "chapter_count": len(story.content.chapters),
             "chapters": [
                 {
                     "index": chapter.index,
@@ -633,12 +633,12 @@ class NovelDirectorAgent(BaseAgent):
                     "status": chapter.status,
                     "has_content": bool(chapter.content),
                 }
-                for chapter in sorted(story.chapters.values(), key=lambda item: item.index)[-12:]
+                for chapter in sorted(story.content.chapters.values(), key=lambda item: item.index)[-12:]
             ],
             "pending_foreshadowings": [
-                item.model_dump() for item in story.foreshadowings if item.status == "pending"
+                item.model_dump() for item in story.memory.foreshadowings if item.status == "pending"
             ][:12],
-            "memory_cards": len(story.memory_cards),
+            "memory_cards": len(story.memory.cards),
             "last_observations": [
                 {
                     "step": item.step,
@@ -698,7 +698,7 @@ class NovelDirectorAgent(BaseAgent):
             )
         if "继续" in user_message or "下一章" in user_message or "write" in text:
             next_chapter = max(story.current_chapter + 1, 1)
-            if len(story.outlines) < next_chapter:
+            if len(story.content.outlines) < next_chapter:
                 return AgentDecision(step=step, intent="create_outline", selected_tool="create_outline", reasoning_summary="The next chapter needs outline coverage first.", tool_args={"num_chapters": next_chapter}, should_continue=True)
             return AgentDecision(step=step, intent="write_next_chapter", selected_tool="auto_write_chapter", reasoning_summary="The user asked to continue writing the next chapter.", tool_args={"chapter_index": next_chapter}, should_continue=False)
         return AgentDecision(step=step, intent="show_status", selected_tool="show_status", reasoning_summary="Default to showing status when intent is unclear.", tool_args={}, should_continue=False)

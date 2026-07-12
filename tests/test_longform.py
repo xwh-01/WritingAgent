@@ -58,7 +58,7 @@ def test_pacing_analyzer_warns_on_flat_trend() -> None:
 def test_character_state_tracker_updates_current_state() -> None:
     story = Story(title="测试", premise="人物状态")
     character = Character(id="hero", name="王绍康")
-    story.characters[character.id] = character
+    story.content.characters[character.id] = character
     tracker = CharacterStateTracker()
 
     states = tracker.extract_state_from_chapter(story, 1, "王绍康在球场发现自己能预判射门。", [character])
@@ -69,7 +69,7 @@ def test_character_state_tracker_updates_current_state() -> None:
 
 def test_longform_manager_processes_new_chapter() -> None:
     story = Story(title="测试", premise="长篇增强")
-    story.characters["hero"] = Character(id="hero", name="主角")
+    story.content.characters["hero"] = Character(id="hero", name="主角")
     manager = LongformManager(MockLLMClient())
 
     result = manager.process_new_chapter(
@@ -79,7 +79,7 @@ def test_longform_manager_processes_new_chapter() -> None:
     )
 
     assert result["summary"]
-    assert story.chapter_summaries[1]
-    assert story.causal_events
-    assert story.foreshadowings
-    assert story.character_states["hero"]
+    assert story.memory.chapter_summaries[1]
+    assert story.memory.causal_events
+    assert story.memory.foreshadowings
+    assert story.memory.states["hero"]

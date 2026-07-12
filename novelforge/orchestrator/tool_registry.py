@@ -173,34 +173,34 @@ class ToolRegistry:
             "title": story.title,
             "status": story.status,
             "current_chapter": story.current_chapter,
-            "outlines": len(story.outlines),
-            "chapters": len(story.chapters),
-            "characters": len(story.characters),
-            "memory_cards": len(story.memory_cards),
-            "foreshadowings": len(story.foreshadowings),
-            "chapter_versions": {str(index): chapter.version for index, chapter in story.chapters.items()},
+            "outlines": len(story.content.outlines),
+            "chapters": len(story.content.chapters),
+            "characters": len(story.content.characters),
+            "memory_cards": len(story.memory.cards),
+            "foreshadowings": len(story.memory.foreshadowings),
+            "chapter_versions": {str(index): chapter.version for index, chapter in story.content.chapters.items()},
             "pending_foreshadowings": [
-                item.model_dump() for item in story.foreshadowings if item.status == "pending"
+                item.model_dump() for item in story.memory.foreshadowings if item.status == "pending"
             ][:12],
-            "recent_character_facts": [item.model_dump() for item in story.character_facts[-20:]],
+            "recent_character_facts": [item.model_dump() for item in story.memory.facts[-20:]],
             "open_revision_proposals": [
                 item.model_dump(exclude={"original_content", "proposed_content"})
-                for item in story.revision_proposals if item.status == "awaiting_approval"
+                for item in story.quality.revision_proposals if item.status == "awaiting_approval"
             ],
         }
-        return {"observation": f"{story.title}: ch{story.current_chapter}, {len(story.chapters)} drafted, {len(story.foreshadowings)} foreshadowings.", "data": data}
+        return {"observation": f"{story.title}: ch{story.current_chapter}, {len(story.content.chapters)} drafted, {len(story.memory.foreshadowings)} foreshadowings.", "data": data}
 
     def _create_outline(self, args: dict[str, Any]) -> dict[str, Any]:
         """工具：创建或扩展章节大纲。"""
         story = self._story()
-        num_chapters = int(args.get("num_chapters") or max(len(story.outlines), story.current_chapter, 1) or self.engine.config.story.default_chapters)
+        num_chapters = int(args.get("num_chapters") or max(len(story.content.outlines), story.current_chapter, 1) or self.engine.config.story.default_chapters)
         outlines = self.engine.generate_outline(num_chapters)
         return {"observation": f"Created outline with {len(outlines)} chapters.", "data": [item.model_dump() for item in outlines]}
 
     def _inspect_chapter(self, args: dict[str, Any]) -> dict[str, Any]:
         """工具：读取章节事实，不修改任何项目状态。"""
         chapter_index = self._chapter_index(args)
-        chapter = self._story().chapters.get(chapter_index)
+        chapter = self._story().content.chapters.get(chapter_index)
         if chapter is None:
             raise WorkflowError(f"Chapter {chapter_index} does not exist.")
         data = chapter.model_dump()
@@ -279,22 +279,22 @@ class ToolRegistry:
         """工具：重新索引指定章节的记忆数据（角色、世界观）并审计连续性。"""
         story = self._story()
         chapter_index = self._chapter_index(args)
-        chapter = story.chapters.get(chapter_index)
+        chapter = story.content.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
             raise WorkflowError(f"Chapter {chapter_index} has no content to update memory from.")
         self.engine._process_chapter_memory(story, chapter)
         story.touch()
         self.engine.save_state()
         return {
-            "observation": f"Updated memory for chapter {chapter_index}: {len(story.memory_cards)} cards, {len(story.chapter_summaries)} summaries.",
-            "data": {"memory_cards": len(story.memory_cards), "chapter_summaries": len(story.chapter_summaries)},
+            "observation": f"Updated memory for chapter {chapter_index}: {len(story.memory.cards)} cards, {len(story.memory.chapter_summaries)} summaries.",
+            "data": {"memory_cards": len(story.memory.cards), "chapter_summaries": len(story.memory.chapter_summaries)},
         }
 
     def _list_foreshadowings(self, args: dict[str, Any]) -> dict[str, Any]:
         """工具：列出故事中的伏笔条目，可按状态筛选。"""
         story = self._story()
         status = args.get("status")
-        items = story.foreshadowings
+        items = story.memory.foreshadowings
         if status:
             items = [item for item in items if item.status == status]
         return {

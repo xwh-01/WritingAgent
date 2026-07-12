@@ -14,9 +14,9 @@ class CharacterFactLedger:
 
     def rebuild_from_states(self, story: Story) -> list[CharacterFact]:
         """Rebuild extracted facts while preserving all user-confirmed overrides."""
-        confirmed = [fact for fact in story.character_facts if fact.user_confirmed]
+        confirmed = [fact for fact in story.memory.facts if fact.user_confirmed]
         generated: list[CharacterFact] = []
-        for character_id, states in story.character_states.items():
+        for character_id, states in story.memory.states.items():
             for state in sorted(states, key=lambda item: item.chapter):
                 if state.location:
                     self._append_temporal(generated, character_id, "location", state.location, state.chapter)
@@ -30,11 +30,11 @@ class CharacterFactLedger:
                     self._append_temporal(
                         generated, character_id, f"relationship:{target}", relation, state.chapter
                     )
-        story.character_facts = sorted(
+        story.memory.facts = sorted(
             generated + confirmed,
             key=lambda fact: (fact.valid_from_chapter, fact.character_id, fact.fact_type, fact.user_confirmed),
         )
-        return story.character_facts
+        return story.memory.facts
 
     def upsert_confirmed(self, story: Story, fact: CharacterFact) -> CharacterFact:
         """Store a user-confirmed fact and make it authoritative for its interval."""
@@ -44,21 +44,21 @@ class CharacterFactLedger:
             raise ValueError("valid_from_chapter must be >= 1")
         if fact.valid_until_chapter is not None and fact.valid_until_chapter < fact.valid_from_chapter:
             raise ValueError("valid_until_chapter must be >= valid_from_chapter")
-        story.character_facts = [item for item in story.character_facts if item.id != fact.id]
-        story.character_facts.append(fact)
-        story.character_facts.sort(key=lambda item: (item.valid_from_chapter, item.character_id, item.fact_type))
+        story.memory.facts = [item for item in story.memory.facts if item.id != fact.id]
+        story.memory.facts.append(fact)
+        story.memory.facts.sort(key=lambda item: (item.valid_from_chapter, item.character_id, item.fact_type))
         return fact
 
     def delete_confirmed(self, story: Story, fact_id: str) -> bool:
-        before = len(story.character_facts)
-        story.character_facts = [
-            fact for fact in story.character_facts if not (fact.id == fact_id and fact.user_confirmed)
+        before = len(story.memory.facts)
+        story.memory.facts = [
+            fact for fact in story.memory.facts if not (fact.id == fact_id and fact.user_confirmed)
         ]
-        return len(story.character_facts) < before
+        return len(story.memory.facts) < before
 
     def facts_at(self, story: Story, chapter_index: int) -> list[CharacterFact]:
         visible = [
-            fact for fact in story.character_facts
+            fact for fact in story.memory.facts
             if fact.valid_from_chapter <= chapter_index
             and (fact.valid_until_chapter is None or fact.valid_until_chapter >= chapter_index)
         ]
@@ -74,7 +74,7 @@ class CharacterFactLedger:
             return ""
         rows = ["人物事实账本（硬事实）:"]
         for fact in facts:
-            character = story.characters.get(fact.character_id)
+            character = story.content.characters.get(fact.character_id)
             name = character.name if character else fact.character_id
             source = "用户确认" if fact.user_confirmed else f"提取自第{fact.source_chapter}章"
             rows.append(f"- {name} | {fact.fact_type} = {fact.value}（{source}）")

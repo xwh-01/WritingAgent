@@ -111,39 +111,48 @@ async function loadStory(storyId) {
 }
 
 function normalizeStory(story) {
-    // API storage is domain-nested; these read-only aliases keep existing workspace renderers concise.
+    // Ensure the four-domain structure has sensible defaults.
     const content = story.content || {};
     const memory = story.memory || {};
     const quality = story.quality || {};
     const runs = story.agent_runs || {};
     return {
         ...story,
-        characters: content.characters || {},
-        world_settings: content.world_settings || [],
-        outlines: content.outlines || [],
-        chapter_contracts: content.chapter_contracts || {},
-        chapters: content.chapters || {},
-        character_facts: memory.facts || [],
-        character_states: memory.states || {},
-        foreshadowings: memory.foreshadowings || [],
-        causal_events: memory.causal_events || [],
-        chapter_summaries: memory.chapter_summaries || {},
-        volume_summaries: memory.volume_summaries || [],
-        arc_summaries: memory.arc_summaries || [],
-        story_bible: memory.story_bible || {},
-        memory_cards: memory.cards || [],
-        auto_revision_reports: quality.auto_revision_reports || {},
-        continuity_reports: quality.continuity_reports || {},
-        character_continuity_reports: quality.character_continuity_reports || [],
-        revision_proposals: quality.revision_proposals || [],
-        agent_trace_runs: runs.director || [],
-        batch_reports: runs.batch_reports || [],
+        content: {
+            characters: content.characters || {},
+            world_settings: content.world_settings || [],
+            outlines: content.outlines || [],
+            chapter_contracts: content.chapter_contracts || {},
+            chapters: content.chapters || {},
+        },
+        memory: {
+            facts: memory.facts || [],
+            states: memory.states || {},
+            foreshadowings: memory.foreshadowings || [],
+            causal_events: memory.causal_events || [],
+            chapter_summaries: memory.chapter_summaries || {},
+            volume_summaries: memory.volume_summaries || [],
+            arc_summaries: memory.arc_summaries || [],
+            story_bible: memory.story_bible || {},
+            cards: memory.cards || [],
+        },
+        quality: {
+            auto_revision_reports: quality.auto_revision_reports || {},
+            continuity_reports: quality.continuity_reports || {},
+            character_continuity_reports: quality.character_continuity_reports || [],
+            revision_proposals: quality.revision_proposals || [],
+        },
+        agent_runs: {
+            autonomous: runs.autonomous || [],
+            director: runs.director || [],
+            batch_reports: runs.batch_reports || [],
+        },
     };
 }
 
 function pickActiveChapter() {
     const current = state.story?.current_chapter || 1;
-    const outlines = state.story?.outlines || [];
+    const outlines = state.story?.content?.outlines || [];
     if (current > 0) return current;
     return outlines[0]?.chapter_index || 1;
 }
@@ -215,8 +224,8 @@ function renderStoryHeader() {
 function renderWorkflow() {
     const steps = [...document.querySelectorAll("[data-workflow-step]")];
     if (!steps.length) return;
-    const outlines = state.story?.outlines || [];
-    const chapters = state.story?.chapters || {};
+    const outlines = state.story?.content?.outlines || [];
+    const chapters = state.story?.content?.chapters || {};
     const hasDraft = Object.values(chapters).some(chapter => chapter?.content);
     const hasTrace = Boolean(latestDirectorRun());
     let active = "setup";
@@ -358,7 +367,7 @@ function renderChapters() {
 }
 
 function renderOutlines() {
-    const outlines = state.story?.outlines || [];
+    const outlines = state.story?.content?.outlines || [];
     els.outlineStrip.innerHTML = outlines.length ? outlines.map(outline => `
         <button class="outline-item ${outline.chapter_index === state.activeChapter ? "active" : ""}" data-outline="${outline.chapter_index}">
             <i data-lucide="list"></i><span>${escapeHtml(outline.title)}</span>
@@ -384,7 +393,7 @@ function renderEditor() {
 
 function renderChapterContract() {
     if (!els.contractEditor) return;
-    const contracts = state.story?.chapter_contracts || {};
+    const contracts = state.story?.content?.chapter_contracts || {};
     const contract = contracts[state.activeChapter] || contracts[String(state.activeChapter)];
     renderCharacterOptions(els.contractPov, contract?.pov_character || "", true);
     els.contractLocation.value = contract?.location || "";
@@ -447,7 +456,7 @@ function renderFactLedger() {
     renderCharacterOptions(els.factCharacter, els.factCharacter.value || "", false);
     els.factFrom.value = els.factFrom.value || String(state.activeChapter);
     const chapter = state.activeChapter;
-    const facts = (state.story?.character_facts || []).filter(fact =>
+    const facts = (state.story?.memory?.facts || []).filter(fact =>
         Number(fact.valid_from_chapter) <= chapter
         && (fact.valid_until_chapter == null || Number(fact.valid_until_chapter) >= chapter)
     );
@@ -456,7 +465,7 @@ function renderFactLedger() {
         return;
     }
     els.factLedger.innerHTML = facts.map(fact => {
-        const character = state.story?.characters?.[fact.character_id];
+        const character = state.story?.content?.characters?.[fact.character_id];
         const name = character?.name || fact.character_id;
         const source = fact.user_confirmed ? "用户确认" : `第${fact.source_chapter || "?"}章提取`;
         const until = fact.valid_until_chapter == null ? "持续" : `至${fact.valid_until_chapter}章`;
@@ -517,8 +526,8 @@ async function deleteCharacterFact(factId) {
 function renderCharacterOptions(select, selected, allowEmpty) {
     if (!select) return;
     const choices = new Map();
-    Object.entries(state.story?.characters || {}).forEach(([id, character]) => choices.set(id, character.name || id));
-    (state.story?.outlines || []).forEach(outline => {
+    Object.entries(state.story?.content?.characters || {}).forEach(([id, character]) => choices.set(id, character.name || id));
+    (state.story?.content?.outlines || []).forEach(outline => {
         if (outline.pov_character) choices.set(outline.pov_character, outline.pov_character);
     });
     const empty = allowEmpty ? '<option value="">未指定</option>' : '<option value="">选择人物</option>';
@@ -551,10 +560,10 @@ function renderLongformMetrics() {
         els.longformMetrics.innerHTML = "";
         return;
     }
-    const pending = (story.foreshadowings || []).filter(item => item.status === "pending").length;
-    const reports = Object.keys(story.auto_revision_reports || {}).length;
-    const summaries = Object.keys(story.chapter_summaries || {}).length;
-    const events = (story.causal_events || []).length;
+    const pending = (story.memory?.foreshadowings || []).filter(item => item.status === "pending").length;
+    const reports = Object.keys(story.quality?.auto_revision_reports || {}).length;
+    const summaries = Object.keys(story.memory?.chapter_summaries || {}).length;
+    const events = (story.memory?.causal_events || []).length;
     els.longformMetrics.innerHTML = [
         ["伏笔", pending],
         ["事件", events],
@@ -574,9 +583,9 @@ function renderDirectorGuide() {
         return;
     }
     const prompt = getSuggestedDirectorPrompt();
-    const outlines = (state.story.outlines || []).length;
-    const chapters = Object.keys(state.story.chapters || {}).length;
-    const pending = (state.story.foreshadowings || []).filter(item => item.status === "pending").length;
+    const outlines = (state.story.content.outlines || []).length;
+    const chapters = Object.keys(state.story.content.chapters || {}).length;
+    const pending = (state.story.memory.foreshadowings || []).filter(item => item.status === "pending").length;
     els.directorHints.innerHTML = `
         <div class="guide-kicker">推荐下一步</div>
         <button type="button" class="guide-suggestion" data-director-suggest="${escapeHtml(prompt)}">
@@ -595,12 +604,12 @@ function renderDirectorGuide() {
 
 function getSuggestedDirectorPrompt() {
     if (!state.story) return "新建一个故事并生成大纲";
-    const outlines = state.story.outlines || [];
-    const chapters = state.story.chapters || {};
+    const outlines = state.story.content.outlines || [];
+    const chapters = state.story.content.chapters || {};
     if (!outlines.length) return "先生成 10 章大纲";
     const nextOutline = outlines.find(outline => !getChapter(outline.chapter_index)?.content);
     if (nextOutline) return `继续写第${nextOutline.chapter_index}章`;
-    const pending = (state.story.foreshadowings || []).filter(item => item.status === "pending").length;
+    const pending = (state.story.memory.foreshadowings || []).filter(item => item.status === "pending").length;
     if (pending) return "查看未回收伏笔并给出处理建议";
     return `检查第${state.activeChapter}章人物有没有崩`;
 }
@@ -613,12 +622,12 @@ function renderContextPreview() {
     }
     const outline = getOutline(state.activeChapter);
     const chapter = getChapter(state.activeChapter);
-    const summary = state.story.chapter_summaries?.[state.activeChapter] || state.story.chapter_summaries?.[String(state.activeChapter)];
-    const characters = Object.values(state.story.characters || {}).slice(0, 4);
-    const pendingForeshadowings = (state.story.foreshadowings || [])
+    const summary = state.story.memory.chapter_summaries?.[state.activeChapter] || state.story.memory.chapter_summaries?.[String(state.activeChapter)];
+    const characters = Object.values(state.story.content.characters || {}).slice(0, 4);
+    const pendingForeshadowings = (state.story.memory.foreshadowings || [])
         .filter(item => item.status === "pending" || item.status === "overdue")
         .slice(0, 4);
-    const memoryCards = (state.story.memory_cards || [])
+    const memoryCards = (state.story.memory.cards || [])
         .slice()
         .sort((left, right) => (Number(right.importance || 0) - Number(left.importance || 0)))
         .slice(0, 4);
@@ -694,7 +703,7 @@ function runGuideAction(action) {
 }
 
 function renderEvents() {
-    const events = (state.story?.causal_events || []).slice(-8).reverse();
+    const events = (state.story?.memory?.causal_events || []).slice(-8).reverse();
     els.eventLog.innerHTML = events.length ? events.map(event => `
         <div class="event-row">第${event.chapter}章 · ${escapeHtml(event.description)}</div>
     `).join("") : `<div class="event-row">No events</div>`;
@@ -719,7 +728,7 @@ async function generateOutline() {
     }
     const count = Math.max(1, Number(prompt("章节数", "10") || "10"));
     let force = false;
-    if ((state.story.outlines || []).length) {
+    if ((state.story.content.outlines || []).length) {
         force = confirm("已有大纲，是否覆盖重建？取消则只补齐缺失章节。");
     }
     setStatus("Generating outline");
@@ -759,7 +768,7 @@ async function writeChapter() {
 }
 
 async function batchWrite() {
-    if (!state.story || !(state.story.outlines || []).length) {
+    if (!state.story || !(state.story.content.outlines || []).length) {
         setStatus("批量写作前需要先有章节大纲");
         return;
     }
@@ -779,7 +788,7 @@ async function batchWrite() {
 }
 
 async function agenticRun() {
-    if (!state.story || !(state.story.outlines || []).length) {
+    if (!state.story || !(state.story.content.outlines || []).length) {
         setStatus("批量编排前需要先有章节大纲");
         return;
     }
@@ -1062,7 +1071,7 @@ function renderAgentTrace(source = null) {
         }
         const proposalId = (directorRun.proposal_ids || []).at(-1);
         if (proposalId) {
-            const proposal = (state.story?.revision_proposals || []).find(item => item.id === proposalId);
+            const proposal = (state.story?.quality?.revision_proposals || []).find(item => item.id === proposalId);
             if (proposal) renderRevisionProposal(proposal);
         }
         return;
@@ -1156,7 +1165,7 @@ function renderRevisionProposal(proposal) {
 }
 
 function latestDirectorRun() {
-    const runs = state.story?.agent_trace_runs || [];
+    const runs = state.story?.agent_runs?.director || [];
     return runs.length ? runs[runs.length - 1] : null;
 }
 
@@ -1172,7 +1181,7 @@ function renderDirectorResult(run) {
     for (const step of run.steps || []) {
         rows.push(`<div class="event-row">Step ${step.step}: ${escapeHtml(step.selected_tool)} · ${step.success ? "success" : "error"} · ${escapeHtml(step.observation || step.error || "")}</div>`);
     }
-    const characterReport = (state.story?.character_continuity_reports || []).at(-1);
+    const characterReport = (state.story?.quality?.character_continuity_reports || []).at(-1);
     if (characterReport && (run.steps || []).some(step => step.selected_tool === "analyze_character_continuity")) {
         rows.push(`<div class="score-row"><strong>角色轨迹审计 · ${escapeHtml(characterReport.character_name || characterReport.character_id)}</strong> · 第${characterReport.start_chapter}-${characterReport.end_chapter}章 · ${characterReport.passed ? "passed" : "needs repair"}</div>`);
         rows.push(`<div class="event-row">${escapeHtml(characterReport.summary || "")}</div>`);
@@ -1225,8 +1234,8 @@ function renderReview(report, validation = null) {
 
 function renderReport(report) {
     if (!report) {
-        const saved = state.story?.auto_revision_reports?.[state.activeChapter];
-        const continuity = state.story?.continuity_reports?.[state.activeChapter];
+        const saved = state.story?.quality?.auto_revision_reports?.[state.activeChapter];
+        const continuity = state.story?.quality?.continuity_reports?.[state.activeChapter];
         report = saved || (continuity ? { continuity_report: continuity } : null);
     }
     if (!report) {
@@ -1285,18 +1294,18 @@ function exportDocx() {
 
 function collectChapterIndexes() {
     const set = new Set();
-    for (const outline of state.story?.outlines || []) set.add(outline.chapter_index);
-    for (const key of Object.keys(state.story?.chapters || {})) set.add(Number(key));
+    for (const outline of state.story?.content?.outlines || []) set.add(outline.chapter_index);
+    for (const key of Object.keys(state.story?.content?.chapters || {})) set.add(Number(key));
     if (!set.size) set.add(1);
     return [...set].sort((a, b) => a - b);
 }
 
 function getChapter(index) {
-    return state.story?.chapters?.[index] || state.story?.chapters?.[String(index)] || null;
+    return state.story?.content?.chapters?.[index] || state.story?.content?.chapters?.[String(index)] || null;
 }
 
 function getOutline(index) {
-    return (state.story?.outlines || []).find(outline => outline.chapter_index === index) || null;
+    return (state.story?.content?.outlines || []).find(outline => outline.chapter_index === index) || null;
 }
 
 async function getJson(url) {
@@ -1341,7 +1350,7 @@ function setDirectorRunning(running) {
 
 function updateActionAvailability() {
     const hasStory = Boolean(state.story);
-    const hasOutlines = Boolean(state.story?.outlines?.length);
+    const hasOutlines = Boolean(state.story?.content?.outlines?.length);
     const hasOutline = Boolean(getOutline(state.activeChapter));
     const hasContent = Boolean(getChapter(state.activeChapter)?.content?.trim());
     setButtonState(els.outlineBtn, hasStory, "请先新建或选择故事");

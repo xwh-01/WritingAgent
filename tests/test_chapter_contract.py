@@ -65,7 +65,7 @@ def test_engine_creates_and_persists_contract(test_config) -> None:
     contract.must_not_happen.append("主角死亡")
     engine.update_chapter_contract(1, contract)
 
-    assert story.chapter_contracts[1].must_not_happen == ["主角死亡"]
+    assert story.content.chapter_contracts[1].must_not_happen == ["主角死亡"]
 
 
 def test_semantic_validation_adds_evidence_when_both_judges_agree() -> None:

@@ -106,7 +106,7 @@ class NovelForgeShell(cmd2.Cmd):
         parts = shlex.split(line)
         if not parts or parts[0] == "list":
             pending = self.engine.longform_manager.foreshadowing_tracker.get_pending(story)
-            items = pending if pending else story.foreshadowings
+            items = pending if pending else story.memory.foreshadowings
             if not items:
                 print("No foreshadowing recorded.")
                 return
@@ -140,10 +140,10 @@ class NovelForgeShell(cmd2.Cmd):
             chain = self.engine.longform_manager.causality_tracker.get_related_chain(story, event_id)
             print(chain)
             return
-        if not story.causal_events:
+        if not story.memory.causal_events:
             print("No causal events recorded.")
             return
-        for event in story.causal_events:
+        for event in story.memory.causal_events:
             print(f"{event.id} ch{event.chapter}: {event.description}")
 
     def do_pacing(self, line: str) -> None:
@@ -153,8 +153,8 @@ class NovelForgeShell(cmd2.Cmd):
             print("No active story.")
             return
         history = self.engine.longform_manager.pacing_history.get(str(story.id), [])
-        if not history and story.chapters:
-            for chapter in story.chapters.values():
+        if not history and story.content.chapters:
+            for chapter in story.content.chapters.values():
                 if chapter.content:
                     analysis = self.engine.longform_manager.pacing_analyzer.analyze_chapter(chapter.content)
                     history.append({"chapter": chapter.index, **analysis})
@@ -177,7 +177,7 @@ class NovelForgeShell(cmd2.Cmd):
             print("Usage: /state <character_id_or_name>")
             return
         character_id = query
-        for cid, character in story.characters.items():
+        for cid, character in story.content.characters.items():
             if query in {cid, character.name}:
                 character_id = cid
                 break
@@ -195,24 +195,24 @@ class NovelForgeShell(cmd2.Cmd):
             return
         command = line.strip() or "show"
         if command == "update":
-            for chapter in story.chapters.values():
+            for chapter in story.content.chapters.values():
                 if chapter.content:
                     self.engine.longform_manager.summary_manager.generate_chapter_summary(story, chapter.index, chapter.content)
-            if story.chapter_summaries:
-                max_chapter = max(story.chapter_summaries)
+            if story.memory.chapter_summaries:
+                max_chapter = max(story.memory.chapter_summaries)
                 volume_count = (max_chapter - 1) // self.engine.longform_manager.summary_manager.chapters_per_volume + 1
                 for volume in range(1, volume_count + 1):
                     self.engine.longform_manager.summary_manager.generate_volume_summary(story, volume)
             story.touch()
             self.engine.save_state()
             print("Summaries updated.")
-        if not story.chapter_summaries:
+        if not story.memory.chapter_summaries:
             print("No summaries recorded.")
             return
-        for index in sorted(story.chapter_summaries):
-            summary = story.chapter_summaries[index]
+        for index in sorted(story.memory.chapter_summaries):
+            summary = story.memory.chapter_summaries[index]
             print(f"第{index}章: {summary.chapter_summary}")
-        for volume in story.volume_summaries:
+        for volume in story.memory.volume_summaries:
             print(f"卷{volume.volume} {volume.chapter_range}: {volume.summary}")
 
     def do_dashboard(self, line: str) -> None:
@@ -336,7 +336,7 @@ class NovelForgeShell(cmd2.Cmd):
         parts = shlex.split(text)
         chapter_index = int(parts[0])
         export = len(parts) > 1 and parts[1] == "export"
-        report = story.auto_revision_reports.get(chapter_index)
+        report = story.quality.auto_revision_reports.get(chapter_index)
         if report is None:
             print(f"No auto-revision report for chapter {chapter_index}.")
             return
@@ -385,7 +385,7 @@ class NovelForgeShell(cmd2.Cmd):
         if story is None:
             print("No active story.")
             return
-        chapter = story.chapters[int(line.strip())]
+        chapter = story.content.chapters[int(line.strip())]
         print(f"# {chapter.title} (v{chapter.version}, {chapter.status})\n")
         print(chapter.content)
 
