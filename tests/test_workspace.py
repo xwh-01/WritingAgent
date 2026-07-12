@@ -66,3 +66,17 @@ def test_update_chapter_content_endpoint() -> None:
     assert validation.status_code == 200
     assert "checks" in validation.json()
     assert "review_required" in validation.json()
+
+
+def test_storage_status_endpoint_exposes_canonical_and_derived_boundaries() -> None:
+    client = TestClient(app)
+    created = client.post("/stories/", json={"premise": "一个存储边界测试", "title": "存储状态"})
+    story_id = created.json()["story"]["id"]
+
+    response = client.get(f"/stories/{story_id}/storage")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["canonical_store"].endswith("novelforge.db")
+    assert "derived_indexes" in payload
+    assert "pending_index_events" in payload

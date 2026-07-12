@@ -339,6 +339,80 @@ class AgentTraceStep(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class DirectorTask(BaseModel):
+    """Director 计划中的一个可追踪任务。"""
+
+    id: str = Field(default_factory=lambda: f"task-{uuid4().hex[:10]}")
+    description: str
+    success_criteria: list[str] = Field(default_factory=list)
+    status: str = "pending"
+    selected_tool: str = ""
+    tool_args: dict[str, Any] = Field(default_factory=dict)
+    dependencies: list[str] = Field(default_factory=list)
+    attempts: int = 0
+    max_attempts: int = 3
+    observation: str = ""
+    evaluation: "TaskEvaluation | None" = None
+
+
+class CriterionResult(BaseModel):
+    """单条成功标准的验收结果和证据。"""
+
+    criterion: str
+    passed: bool
+    evidence: str = ""
+
+
+class TaskEvaluation(BaseModel):
+    """工具执行结果相对于任务目标的结构化验收。"""
+
+    passed: bool
+    criterion_results: list[CriterionResult] = Field(default_factory=list)
+    recoverable: bool = True
+    recommended_action: str = "complete"
+    feedback: str = ""
+
+
+class DirectorPlan(BaseModel):
+    """Director 围绕用户目标维护的持久化执行计划。"""
+
+    objective: str
+    success_criteria: list[str] = Field(default_factory=list)
+    tasks: list[DirectorTask] = Field(default_factory=list)
+    status: str = "planned"
+    assumptions: list[str] = Field(default_factory=list)
+    replan_count: int = 0
+    max_replans: int = 2
+
+
+class UserQuestion(BaseModel):
+    """会阻塞任务执行的结构化用户问题。"""
+
+    id: str = Field(default_factory=lambda: f"question-{uuid4().hex[:10]}")
+    question: str
+    reason: str = ""
+    options: list[str] = Field(default_factory=list)
+    required_for_task: str = ""
+    answer: str | None = None
+
+
+class RevisionProposal(BaseModel):
+    """尚未覆盖正式正文的章节修订候选。"""
+
+    id: str = Field(default_factory=lambda: f"proposal-{uuid4().hex[:12]}")
+    story_id: str
+    chapter_index: int
+    source_version: int
+    instruction: str
+    original_content: str
+    proposed_content: str
+    review_report: ReviewReport
+    validation_report: ReviewReport
+    status: str = "awaiting_approval"
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class AgentTraceRun(BaseModel):
     """Agent 一次完整运行的追踪记录，汇聚所有步骤和最终摘要。"""
 
@@ -349,6 +423,11 @@ class AgentTraceRun(BaseModel):
     steps: list[AgentTraceStep] = Field(default_factory=list)
     trace_events: list[dict[str, Any]] = Field(default_factory=list)
     final_summary: str = ""
+    pending_question: str = ""
+    pending_user_question: UserQuestion | None = None
+    user_responses: list[str] = Field(default_factory=list)
+    plan: DirectorPlan | None = None
+    proposal_ids: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -383,6 +462,32 @@ class CharacterState(BaseModel):
     location: str = ""
     knowledge_gained: list[str] = Field(default_factory=list)
     relationship_changes: dict[str, str] = Field(default_factory=dict)
+
+
+class CharacterContinuityIssue(BaseModel):
+    """角色在跨章节轨迹中出现的不连续或缺少过渡的证据。"""
+
+    chapter_index: int
+    dimension: str
+    severity: str = "medium"
+    description: str
+    evidence: str = ""
+    suggestion: str = ""
+    previous_chapter: int | None = None
+
+
+class CharacterContinuityReport(BaseModel):
+    """一位角色在指定章节范围内的人设、知识、地点和关系轨迹审计。"""
+
+    character_id: str
+    character_name: str = ""
+    start_chapter: int
+    end_chapter: int
+    trajectory: list[CharacterState] = Field(default_factory=list)
+    issues: list[CharacterContinuityIssue] = Field(default_factory=list)
+    affected_chapters: list[int] = Field(default_factory=list)
+    passed: bool = True
+    summary: str = ""
 
 
 class CharacterFact(BaseModel):
@@ -477,9 +582,11 @@ class Story(BaseModel):
     memory_cards: list[MemoryCard] = Field(default_factory=list)
     auto_revision_reports: dict[int, AutoRevisionReport] = Field(default_factory=dict)
     continuity_reports: dict[int, ContinuityAuditReport] = Field(default_factory=dict)
+    character_continuity_reports: list[CharacterContinuityReport] = Field(default_factory=list)
     batch_reports: list[BatchWriteReport] = Field(default_factory=list)
     agent_runs: list[AutonomousRunReport] = Field(default_factory=list)
     agent_trace_runs: list[AgentTraceRun] = Field(default_factory=list)
+    revision_proposals: list[RevisionProposal] = Field(default_factory=list)
     current_chapter: int = 0
     status: str = "planning"
     created_at: datetime = Field(default_factory=utc_now)

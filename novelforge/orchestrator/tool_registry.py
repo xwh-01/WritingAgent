@@ -138,13 +138,15 @@ class ToolRegistry:
 
     def _register_defaults(self) -> None:
         self._register("show_status", "Show current story progress, outline count, chapter count, and memory counts.", {}, self._show_status)
+        self._register("inspect_chapter", "Read an existing chapter, its version, status, summary, and optionally full content.", {"chapter_index": "int", "include_content": "bool optional"}, self._inspect_chapter)
         self._register("create_outline", "Create or extend chapter outlines.", {"num_chapters": "int optional"}, self._create_outline)
         self._register("create_beats", "Create scene beats for a chapter.", {"chapter_index": "int"}, self._create_beats)
         self._register("write_chapter", "Write a draft chapter.", {"chapter_index": "int"}, self._write_chapter)
         self._register("review_chapter", "Review a chapter for logic, character, and pacing issues.", {"chapter_index": "int"}, self._review_chapter)
-        self._register("revise_chapter", "Revise a chapter using the latest review report or optional revised_content.", {"chapter_index": "int", "revised_content": "str optional"}, self._revise_chapter)
+        self._register("revise_chapter", "Create a reviewed revision proposal for an existing chapter. It never overwrites正文 before user approval.", {"chapter_index": "int", "revision_instruction": "str optional", "revised_content": "str optional"}, self._revise_chapter)
         self._register("auto_write_chapter", "Write, review, revise, and re-review a chapter.", {"chapter_index": "int"}, self._auto_write_chapter)
         self._register("audit_continuity", "Audit long-form continuity for a chapter.", {"chapter_index": "int"}, self._audit_continuity)
+        self._register("analyze_character_continuity", "Analyze one character's persona, knowledge, emotion, location, and relationships across a chapter range; return evidence-backed repair targets.", {"character": "str", "start_chapter": "int", "end_chapter": "int"}, self._analyze_character_continuity)
         self._register("update_memory", "Re-index and extract long-form memory for a chapter.", {"chapter_index": "int"}, self._update_memory)
         self._register("list_foreshadowings", "List foreshadowings, optionally filtered by status.", {"status": "str optional"}, self._list_foreshadowings)
 
@@ -176,6 +178,15 @@ class ToolRegistry:
             "characters": len(story.characters),
             "memory_cards": len(story.memory_cards),
             "foreshadowings": len(story.foreshadowings),
+            "chapter_versions": {str(index): chapter.version for index, chapter in story.chapters.items()},
+            "pending_foreshadowings": [
+                item.model_dump() for item in story.foreshadowings if item.status == "pending"
+            ][:12],
+            "recent_character_facts": [item.model_dump() for item in story.character_facts[-20:]],
+            "open_revision_proposals": [
+                item.model_dump(exclude={"original_content", "proposed_content"})
+                for item in story.revision_proposals if item.status == "awaiting_approval"
+            ],
         }
         return {"observation": f"{story.title}: ch{story.current_chapter}, {len(story.chapters)} drafted, {len(story.foreshadowings)} foreshadowings.", "data": data}
 
@@ -185,6 +196,21 @@ class ToolRegistry:
         num_chapters = int(args.get("num_chapters") or max(len(story.outlines), story.current_chapter, 1) or self.engine.config.story.default_chapters)
         outlines = self.engine.generate_outline(num_chapters)
         return {"observation": f"Created outline with {len(outlines)} chapters.", "data": [item.model_dump() for item in outlines]}
+
+    def _inspect_chapter(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：读取章节事实，不修改任何项目状态。"""
+        chapter_index = self._chapter_index(args)
+        chapter = self._story().chapters.get(chapter_index)
+        if chapter is None:
+            raise WorkflowError(f"Chapter {chapter_index} does not exist.")
+        data = chapter.model_dump()
+        if not args.get("include_content", True):
+            data["content"] = ""
+            data["history"] = []
+        return {
+            "observation": f"Inspected chapter {chapter_index} v{chapter.version} ({len(chapter.content)} chars).",
+            "data": data,
+        }
 
     def _create_beats(self, args: dict[str, Any]) -> dict[str, Any]:
         """工具：为指定章节生成场景节拍。"""
@@ -205,8 +231,16 @@ class ToolRegistry:
 
     def _revise_chapter(self, args: dict[str, Any]) -> dict[str, Any]:
         """工具：基于最新评审报告或手动提供的修订内容修改章节。"""
-        chapter = self.engine.apply_revision(self._chapter_index(args), args.get("revised_content"))
-        return {"observation": f"Revised chapter {chapter.index}: {chapter.title} v{chapter.version}.", "data": chapter.model_dump()}
+        instruction = args.get("revision_instruction") or "根据最新审查报告修改本章"
+        proposal = self.engine.create_revision_proposal(self._chapter_index(args), instruction)
+        return {
+            "observation": (
+                f"Created revision proposal {proposal.id} for chapter {proposal.chapter_index}; "
+                "waiting for user approval before changing the chapter."
+            ),
+            "data": proposal.model_dump(),
+            "requires_approval": True,
+        }
 
     def _auto_write_chapter(self, args: dict[str, Any]) -> dict[str, Any]:
         """工具：对指定章节执行写作→评审→修订自动化循环。"""
@@ -223,6 +257,23 @@ class ToolRegistry:
         chapter_index = self._chapter_index(args)
         report = self.engine.audit_chapter_continuity(chapter_index)
         return {"observation": f"Audited chapter {chapter_index}: risk={report.risk_score:.1f}, passed={report.passed}.", "data": report.model_dump()}
+
+    def _analyze_character_continuity(self, args: dict[str, Any]) -> dict[str, Any]:
+        """工具：审计角色弧线并返回需要修订的章节和证据。"""
+        report = self.engine.audit_character_continuity(
+            str(args["character"]),
+            int(args["start_chapter"]),
+            int(args["end_chapter"]),
+        )
+        return {
+            "observation": (
+                f"Audited {report.character_name or report.character_id} across chapters "
+                f"{report.start_chapter}-{report.end_chapter}: {len(report.issues)} issue(s), "
+                f"repair targets={report.affected_chapters}."
+            ),
+            "data": report.model_dump(),
+            "repair_targets": report.affected_chapters,
+        }
 
     def _update_memory(self, args: dict[str, Any]) -> dict[str, Any]:
         """工具：重新索引指定章节的记忆数据（角色、世界观）并审计连续性。"""

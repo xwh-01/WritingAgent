@@ -102,11 +102,11 @@ class ChromaVectorStore(IVectorStore):
         """初始化 Chroma 持久化客户端，失败时启用内存后备方案。"""
         self.persist_directory = Path(persist_directory)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
+        self._fallback = InMemoryVectorStore()
         try:
             import chromadb
 
             self.client = chromadb.PersistentClient(path=str(self.persist_directory))
-            self._fallback: InMemoryVectorStore | None = None
         except Exception as exc:
             logger.warning(
                 "ChromaDB is unavailable (%s). Falling back to in-memory vector store. "
@@ -114,20 +114,22 @@ class ChromaVectorStore(IVectorStore):
                 exc,
             )
             self.client = None
-            self._fallback = InMemoryVectorStore()
 
     def add(self, collection: str, documents: list[str], metadatas: list[dict[str, Any]], ids: list[str]) -> None:
         """向 Chroma 集合批量 upsert 文档，带时间戳元数据。"""
-        if self._fallback is not None:
-            self._fallback.add(collection, documents, metadatas, ids)
+        self._fallback.add(collection, documents, metadatas, ids)
+        if self.client is None:
             return
         enriched = []
         for metadata in metadatas:
             item = dict(metadata)
             item.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
             enriched.append(item)
-        coll = self.client.get_or_create_collection(collection)
-        coll.upsert(documents=documents, metadatas=enriched, ids=ids)
+        try:
+            coll = self.client.get_or_create_collection(collection)
+            coll.upsert(documents=documents, metadatas=enriched, ids=ids)
+        except Exception as exc:
+            logger.warning("Chroma upsert failed; retained in-memory mirror: %s", exc)
 
     def query(
         self,
@@ -138,9 +140,8 @@ class ChromaVectorStore(IVectorStore):
         max_chapter: int | None = None,
     ) -> list[dict[str, Any]]:
         """在 Chroma 集合中执行语义查询，返回 Top-K 结果，支持按 story_id 过滤。"""
-        if self._fallback is not None:
+        if self.client is None:
             return self._fallback.query(collection, query_text, k, story_id=story_id, max_chapter=max_chapter)
-        coll = self.client.get_or_create_collection(collection)
         query_kwargs: dict[str, Any] = {"query_texts": [query_text], "n_results": k}
         filters: list[dict[str, Any]] = []
         if story_id is not None:
@@ -151,7 +152,12 @@ class ChromaVectorStore(IVectorStore):
             query_kwargs["where"] = filters[0]
         elif filters:
             query_kwargs["where"] = {"$and": filters}
-        result = coll.query(**query_kwargs)
+        try:
+            coll = self.client.get_or_create_collection(collection)
+            result = coll.query(**query_kwargs)
+        except Exception as exc:
+            logger.warning("Chroma query failed; using in-memory mirror: %s", exc)
+            return self._fallback.query(collection, query_text, k, story_id=story_id, max_chapter=max_chapter)
         ids = result.get("ids", [[]])[0]
         docs = result.get("documents", [[]])[0]
         metas = result.get("metadatas", [[]])[0]
@@ -167,19 +173,21 @@ class ChromaVectorStore(IVectorStore):
         ]
 
     def delete_prefix(self, collection: str, id_prefix: str) -> int:
-        if self._fallback is not None:
-            return self._fallback.delete_prefix(collection, id_prefix)
+        fallback_deleted = self._fallback.delete_prefix(collection, id_prefix)
+        if self.client is None:
+            return fallback_deleted
         coll = self.client.get_or_create_collection(collection)
         items = coll.get()
         ids = [doc_id for doc_id in items.get("ids", []) if doc_id.startswith(id_prefix)]
         if ids:
             coll.delete(ids=ids)
-        return len(ids)
+        return max(len(ids), fallback_deleted)
 
     def delete_story(self, story_id: str) -> int:
         """遍历所有集合，删除与指定故事关联的文档，返回删除总数。"""
-        if self._fallback is not None:
-            return self._fallback.delete_story(story_id)
+        fallback_deleted = self._fallback.delete_story(story_id)
+        if self.client is None:
+            return fallback_deleted
         deleted = 0
         collections = self.client.list_collections()
         for collection in collections:
@@ -199,4 +207,4 @@ class ChromaVectorStore(IVectorStore):
             if unique_ids:
                 coll.delete(ids=unique_ids)
                 deleted += len(unique_ids)
-        return deleted
+        return max(deleted, fallback_deleted)

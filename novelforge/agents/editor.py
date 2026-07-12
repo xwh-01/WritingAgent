@@ -13,14 +13,22 @@ class EditorAgent(BaseAgent):
 
     name = "editor"
 
-    def revise_chapter(self, chapter_content: str, review_report: ReviewReport, style_guide: str = "") -> str:
+    def revise_chapter(
+        self,
+        chapter_content: str,
+        review_report: ReviewReport,
+        style_guide: str = "",
+        revision_instruction: str = "",
+    ) -> str:
         """根据审查报告修订章节全文，输出修订后正文。"""
         system = (
             "你是执行力很强的小说编辑。根据审查报告修订全文，保留有效内容，修复问题。"
+            "用户的具体修改要求优先于通用润色要求，但不得破坏明确的故事事实。"
             f"文风指南: {style_guide or '保持原有叙事风格，增强清晰度和张力。'}"
         )
         user = (
             "revise_chapter 润色并修订以下章节。\n"
+            f"用户修改要求: {revision_instruction or '根据审查报告修复现有问题。'}\n"
             f"审查报告: {json.dumps(review_report.model_dump(), ensure_ascii=False)}\n"
             f"原文: {chapter_content}\n"
             "只输出修订后全文。"

@@ -11,7 +11,12 @@ memory:
   text_store: sqlite_fts
   persist_directory: ./novelforge/storage/chroma_data
   graph_directory: ./novelforge/storage/graph_data
-  sqlite_path: ./novelforge/storage/story_state/fts.sqlite3
+  sqlite_path: ./novelforge/storage/indexes/fts.sqlite3
+
+storage:
+  database_path: ./novelforge/storage/novelforge.db
+  artifact_directory: ./novelforge/storage/artifacts
+  legacy_state_directory: ./novelforge/storage/story_state
 
 story:
   default_chapters: 10

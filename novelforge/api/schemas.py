@@ -51,6 +51,25 @@ class DirectorRunRequest(BaseModel):
     max_steps: int = 6
 
 
+class DirectorResumeRequest(BaseModel):
+    """回答 Director 追问并恢复原运行。"""
+
+    user_response: str
+    max_steps: int = 6
+
+
+class DirectorContinueRequest(BaseModel):
+    """从 Director 检查点继续执行。"""
+
+    max_steps: int = 6
+
+
+class RevisionProposalFeedbackRequest(BaseModel):
+    """要求 Director 基于反馈继续调整候选稿。"""
+
+    instruction: str
+
+
 class ReviseRequest(BaseModel):
     """章节修订的请求体。"""
 

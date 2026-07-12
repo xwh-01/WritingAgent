@@ -5,6 +5,8 @@
 If you just want to understand the project quickly, start with `docs/PROJECT_MAP.md`.
 It explains the reading order, directory responsibilities, core workflow, and interview talking points.
 
+For data ownership, write boundaries, derived-index rebuilding, and legacy migration, read `docs/STORAGE_MODEL.md`.
+
 ## Project Positioning
 
 NovelForge is a vertical Agentic Workflow / Agent Engineering project for long-form fiction writing. It focuses on one bounded domain: planning, drafting, reviewing, revising, and remembering a serialized novel.
@@ -41,6 +43,8 @@ Golden path:
 10. View trace JSON: `GET /stories/{story_id}/agent/runs/{run_id}/trace.json`
 11. View debug report: `GET /stories/{story_id}/agent/runs/{run_id}/debug.md`
 12. Run evals: `python -m evals.run_eval`
+
+When Director revises an existing chapter, it now creates a reviewed revision proposal instead of overwriting the chapter. The run pauses at `awaiting_approval`; accept, reject, or request another revision from the Workspace before the official chapter and long-form memory are updated.
 
 The debug report explains each stage/action/tool, observations, memory hits, review score changes, and structured errors.
 
@@ -234,15 +238,17 @@ uvicorn novelforge.api.main:app --reload --port 8001
 
 ### 9. 导出和数据位置
 
-点击顶部“导出”可以生成 DOCX。故事状态和派生数据默认保存在：
+点击顶部“导出”可以生成 DOCX。SQLite 是故事、章节、人物事实、Director 运行和候选稿的唯一事实源；向量、图谱和全文检索是可删除并重建的派生索引：
 
 ```text
-novelforge/storage/story_state/
-novelforge/storage/chroma_data/
-novelforge/storage/graph_data/
+novelforge/storage/novelforge.db          # 唯一事实源
+novelforge/storage/artifacts/             # Trace、报告和导出物
+novelforge/storage/indexes/fts.sqlite3    # 全文检索索引
+novelforge/storage/chroma_data/           # 向量索引
+novelforge/storage/graph_data/            # 关系图索引
 ```
 
-不要手动只删除其中一个索引目录来修改故事内容；正文和人物事实应通过工作台或 API 更新。
+不要手动编辑索引来修改故事内容；正文、人物事实和审批状态必须通过工作台或 API 更新。索引损坏时可从 `novelforge.db` 重建。
 
 ### 10. 推荐的单章操作顺序
 
@@ -290,6 +296,7 @@ http://127.0.0.1:8000/dashboard/?story_id=<story_id>
 ```text
 POST /stories/
 GET /stories/{story_id}/
+GET /stories/{story_id}/storage
 POST /stories/{story_id}/outline
 POST /stories/{story_id}/batch-write
 GET /chapters/{chapter_index}/?story_id=<story_id>
@@ -312,6 +319,7 @@ GET /chapters/{chapter_index}/report.md?story_id=<story_id>
 GET /stories/{story_id}/facts?chapter_index=<chapter_index>
 POST /stories/{story_id}/facts
 DELETE /stories/{story_id}/facts/{fact_id}
+POST /stories/{story_id}/indexes/rebuild
 WebSocket /ws/{story_id}
 GET /dashboard/
 GET /dashboard/data/{story_id}
@@ -321,11 +329,16 @@ GET /workspace/
 
 ## Director Agent and Agent Trace
 
-Director Agent 是高级自然语言调度入口，不是默认创作主线：
+Director Agent 是目标驱动的自然语言任务入口：
 
-- `/agent <自然语言任务>` 是 CLI 中的 Director 入口。它读取当前故事状态，由 LLM 选择并执行工具，同时记录 `AgentTraceRun`。
+- Director 会先生成带依赖关系和成功标准的完整计划，再逐项调用专业 Agent 工具。
+- `TaskEvaluatorAgent` 会根据可观察证据验收每一步；工具返回成功不再自动等于任务完成。
+- 验收失败时会在次数限制内重试或补充前置任务；步数耗尽会保存 `paused` 检查点，可继续同一次运行。
+- 信息不足时进入 `needs_user_input`；用户回答后根据原目标、问题和答案重新规划。
+- 修改正文只生成经过 Critic 验收的候选稿，进入 `awaiting_approval`；接受后才更新正文、版本历史和长篇记忆，并继续剩余计划。
+- Director 支持跨章节角色弧线任务：先审计人物的情绪、地点、知识和关系轨迹，再仅为有证据的问题章节生成修订候选稿。
 - `/agentic-run` / Supervisor 流程已经弃用，仅为兼容旧调用保留；新流程使用章节合同配合普通写作或 `batch-write`。
-- Agent Trace 展示 Director 每一步的工具选择和执行结果，包括 `selected_tool`、`reasoning_summary`、`tool_args`、`observation`、`success/error` 和 `final_summary`。
+- Agent Trace 展示目标、成功标准、任务依赖、尝试次数、验收结果、工具观察、追问、检查点和审批状态。
 
 相关端点：
 
@@ -333,8 +346,14 @@ Director Agent 是高级自然语言调度入口，不是默认创作主线：
 POST /stories/{story_id}/agent/run
 GET /stories/{story_id}/agent/runs
 GET /stories/{story_id}/agent/runs/{run_id}
+POST /stories/{story_id}/agent/runs/{run_id}/resume
+POST /stories/{story_id}/agent/runs/{run_id}/continue
 GET /stories/{story_id}/agent/runs/{run_id}/trace.json
 GET /stories/{story_id}/agent/runs/{run_id}/debug.md
+GET /stories/{story_id}/revision-proposals/{proposal_id}
+POST /stories/{story_id}/revision-proposals/{proposal_id}/accept
+POST /stories/{story_id}/revision-proposals/{proposal_id}/reject
+POST /stories/{story_id}/revision-proposals/{proposal_id}/revise
 GET /agent-trace/
 ```
 
@@ -512,7 +531,9 @@ NOVELFORGE_LLM_PROVIDER=mock
 DEEPSEEK_API_KEY=
 NOVELFORGE_CHROMA_DIR=./novelforge/storage/chroma_data
 NOVELFORGE_GRAPH_DIR=./novelforge/storage/graph_data
-NOVELFORGE_SQLITE_PATH=./novelforge/storage/story_state/fts.sqlite3
+NOVELFORGE_DATABASE_PATH=./novelforge/storage/novelforge.db
+NOVELFORGE_ARTIFACT_DIR=./novelforge/storage/artifacts
+NOVELFORGE_SQLITE_PATH=./novelforge/storage/indexes/fts.sqlite3
 ```
 
 要使用 DeepSeek：

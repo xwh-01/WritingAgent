@@ -10,11 +10,14 @@ from novelforge.api.schemas import (
     BatchWriteRequest,
     CreateStoryRequest,
     CharacterFactRequest,
+    DirectorResumeRequest,
+    DirectorContinueRequest,
     DirectorRunRequest,
     OutlineRequest,
     OutlineResponse,
     StatusResponse,
     StoryResponse,
+    RevisionProposalFeedbackRequest,
 )
 from novelforge.api.state import AUTO_REVISION_JOBS, ENGINES, get_engine
 from novelforge.orchestrator.engine import NovelForgeEngine
@@ -66,6 +69,21 @@ def get_story(story_id: str) -> StoryResponse:
     return StoryResponse(story=engine.story)
 
 
+@router.get("/{story_id}/storage")
+def get_story_storage_status(story_id: str) -> dict:
+    """显示事实源、artifact 位置和待同步的派生索引事件。"""
+    engine = get_engine(story_id)
+    return {
+        "story_id": story_id,
+        **engine.repository.storage_status(story_id),
+        "derived_indexes": {
+            "vector": str(engine.config.memory.persist_directory),
+            "graph": str(engine.config.memory.graph_directory),
+            "full_text": str(engine.config.memory.sqlite_path),
+        },
+    }
+
+
 @router.delete("/{story_id}")
 def delete_story(story_id: str) -> dict:
     """DELETE /stories/{story_id} — 删除指定故事及其所有数据文件。"""
@@ -73,6 +91,12 @@ def delete_story(story_id: str) -> dict:
     result = engine.delete_story_data(story_id)
     ENGINES.pop(story_id, None)
     return {"deleted": bool(result["story_file"]), **result}
+
+
+@router.post("/{story_id}/indexes/rebuild")
+def rebuild_story_indexes(story_id: str) -> dict:
+    """从 SQLite 事实源重建向量、全文和图谱索引。"""
+    return get_engine(story_id).rebuild_derived_indexes(story_id)
 
 
 @router.post("/{story_id}/outline", response_model=OutlineResponse)
@@ -131,6 +155,25 @@ def run_director_agent(story_id: str, payload: DirectorRunRequest) -> dict:
     return engine.run_director_agent(payload.user_message, payload.max_steps).model_dump()
 
 
+@router.post("/{story_id}/agent/runs/{run_id}/resume")
+def resume_director_agent(story_id: str, run_id: str, payload: DirectorResumeRequest) -> dict:
+    """回答 Director 的追问，并从原运行上下文继续执行。"""
+    engine = get_engine(story_id)
+    try:
+        return engine.resume_director_agent(run_id, payload.user_response, payload.max_steps).model_dump()
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{story_id}/agent/runs/{run_id}/continue")
+def continue_director_agent(story_id: str, run_id: str, payload: DirectorContinueRequest) -> dict:
+    """从持久化检查点继续执行未完成计划。"""
+    try:
+        return get_engine(story_id).continue_director_agent(run_id, payload.max_steps).model_dump()
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.get("/{story_id}/agent/runs")
 def list_director_runs(story_id: str) -> dict:
     """GET /stories/{story_id}/agent/runs — 列出该故事的所有 Director 代理运行记录。"""
@@ -146,6 +189,50 @@ def get_director_run(story_id: str, run_id: str) -> dict:
     if run is None:
         raise HTTPException(status_code=404, detail=f"Director trace run not found: {run_id}")
     return run.model_dump()
+
+
+@router.get("/{story_id}/revision-proposals/{proposal_id}")
+def get_revision_proposal(story_id: str, proposal_id: str) -> dict:
+    """读取一份待审批或已处理的修订候选。"""
+    proposal = get_engine(story_id).get_revision_proposal(proposal_id)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail=f"Revision proposal not found: {proposal_id}")
+    return proposal.model_dump()
+
+
+@router.post("/{story_id}/revision-proposals/{proposal_id}/accept")
+def accept_revision_proposal(story_id: str, proposal_id: str) -> dict:
+    """批准候选并应用到正式章节。"""
+    try:
+        chapter = get_engine(story_id).accept_revision_proposal(proposal_id)
+        return {"accepted": True, "chapter": chapter.model_dump()}
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{story_id}/revision-proposals/{proposal_id}/reject")
+def reject_revision_proposal(story_id: str, proposal_id: str) -> dict:
+    """拒绝候选且保留原正文。"""
+    try:
+        proposal = get_engine(story_id).reject_revision_proposal(proposal_id)
+        return proposal.model_dump()
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{story_id}/revision-proposals/{proposal_id}/revise")
+def revise_revision_proposal(
+    story_id: str,
+    proposal_id: str,
+    payload: RevisionProposalFeedbackRequest,
+) -> dict:
+    """按用户追加要求生成下一版候选。"""
+    try:
+        return get_engine(story_id).revise_revision_proposal(
+            proposal_id, payload.instruction
+        ).model_dump()
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/{story_id}/agent/runs/{run_id}/trace.json")

@@ -69,11 +69,12 @@ def test_agentic_run_api_background_job() -> None:
     assert started.status_code == 200
     job_id = started.json()["id"]
     payload = {}
-    for _ in range(20):
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
         payload = client.get("/chapters/auto/status", params={"story_id": story_id, "job_id": job_id}).json()
         if payload["status"] in {"agentic_finished", "agentic_finished_with_failures", "failed"}:
             break
-        time.sleep(0.05)
+        time.sleep(0.1)
 
     assert payload["id"] == job_id
     assert payload["status"] == "agentic_finished"

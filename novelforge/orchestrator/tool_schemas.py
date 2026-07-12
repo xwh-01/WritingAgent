@@ -19,9 +19,16 @@ class ChapterIndexArgs(BaseModel):
     chapter_index: int = Field(ge=1)
 
 
+class InspectChapterArgs(ChapterIndexArgs):
+    """读取章节，可选择是否包含完整正文。"""
+
+    include_content: bool = True
+
+
 class ReviseChapterArgs(ChapterIndexArgs):
     """revise_chapter 工具的参数模型，继承 ChapterIndexArgs 并增加可选的手动替换内容。"""
     revised_content: str | None = None
+    revision_instruction: str | None = None
 
 
 class ListForeshadowingsArgs(BaseModel):
@@ -29,8 +36,17 @@ class ListForeshadowingsArgs(BaseModel):
     status: str | None = None
 
 
+class CharacterContinuityArgs(BaseModel):
+    """跨章节角色连续性审计参数。"""
+
+    character: str = Field(min_length=1)
+    start_chapter: int = Field(ge=1)
+    end_chapter: int = Field(ge=1)
+
+
 TOOL_ARG_SCHEMAS: dict[str, type[BaseModel]] = {
     "show_status": EmptyArgs,
+    "inspect_chapter": InspectChapterArgs,
     "create_outline": CreateOutlineArgs,
     "create_beats": ChapterIndexArgs,
     "write_chapter": ChapterIndexArgs,
@@ -40,4 +56,5 @@ TOOL_ARG_SCHEMAS: dict[str, type[BaseModel]] = {
     "audit_continuity": ChapterIndexArgs,
     "update_memory": ChapterIndexArgs,
     "list_foreshadowings": ListForeshadowingsArgs,
+    "analyze_character_continuity": CharacterContinuityArgs,
 }

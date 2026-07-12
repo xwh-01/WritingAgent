@@ -18,6 +18,11 @@ env/
 # Runtime storage artifacts
 novelforge/storage/*.docx
 novelforge/storage/*.md
+novelforge/storage/*.db
+novelforge/storage/*.db-shm
+novelforge/storage/*.db-wal
+novelforge/storage/artifacts/
+novelforge/storage/indexes/
 novelforge/storage/chroma_data/*
 !novelforge/storage/chroma_data/.gitkeep
 novelforge/storage/graph_data/*

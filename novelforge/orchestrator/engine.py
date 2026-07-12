@@ -10,12 +10,14 @@ from typing import Callable
 from uuid import UUID
 
 from novelforge.agents import (
+    CharacterArcAuditorAgent,
     ContinuityAuditorAgent,
     CriticAgent,
     EditorAgent,
     NovelDirectorAgent,
     PlannerAgent,
     SupervisorAgent,
+    TaskEvaluatorAgent,
     WriterAgent,
 )
 from novelforge.context.assembler import ContextAssembler
@@ -30,9 +32,11 @@ from novelforge.core.models import (
     Chapter,
     ChapterContract,
     CharacterFact,
+    CharacterContinuityReport,
     ChapterOutline,
     ContinuityAuditReport,
     ReviewReport,
+    RevisionProposal,
     Story,
     utc_now,
 )
@@ -84,20 +88,26 @@ class NovelForgeEngine:
         self.planner = PlannerAgent(self.llm)
         self.supervisor = SupervisorAgent(self.llm)
         self.director = NovelDirectorAgent(self.llm)
+        self.task_evaluator = TaskEvaluatorAgent(self.llm)
         self.writer = WriterAgent(self.llm)
         self.critic = CriticAgent(self.llm)
         self.editor = EditorAgent(self.llm)
         self.continuity_auditor = ContinuityAuditorAgent(self.llm)
+        self.character_arc_auditor = CharacterArcAuditorAgent(self.llm)
         self.story: Story | None = None
         self.last_review: dict[int, ReviewReport] = {}
         self.current_auto_revisor: AutoRevisor | None = None
         self.auto_status: str = "idle"
-        self.repository = StoryRepository(Path(self.config.memory.sqlite_path).parent)
+        self.repository = StoryRepository(
+            database_path=self.config.storage.database_path,
+            artifact_directory=self.config.storage.artifact_directory,
+            legacy_state_directory=self.config.storage.legacy_state_directory,
+        )
 
     @property
     def state_dir(self) -> Path:
-        """故事状态持久化目录路径，按需创建。"""
-        path = Path("./novelforge/storage/story_state")
+        """Artifact directory for exports and debug files; canonical state resides in SQLite."""
+        path = Path(self.config.storage.artifact_directory)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -289,20 +299,188 @@ class NovelForgeEngine:
         self.save_state()
         return report
 
-    def apply_revision(self, chapter_index: int, revised_content: str | None = None) -> Chapter:
+    def audit_character_continuity(
+        self,
+        character_query: str,
+        start_chapter: int,
+        end_chapter: int,
+    ) -> CharacterContinuityReport:
+        """审计指定角色跨章节的人设与状态演变，并保存供 Director 后续修订使用的报告。"""
+        story = self._require_story()
+        if end_chapter < start_chapter:
+            raise WorkflowError("end_chapter must be >= start_chapter")
+        query = character_query.strip().lower()
+        matches = [
+            character for character in story.characters.values()
+            if query in {character.id.lower(), character.name.lower()}
+        ]
+        if not matches:
+            raise WorkflowError(f"Character '{character_query}' was not found in this story.")
+        if len(matches) > 1:
+            raise WorkflowError(f"Character '{character_query}' is ambiguous; use an exact character id.")
+        report = self.character_arc_auditor.audit(
+            story, matches[0], start_chapter, end_chapter
+        )
+        story.character_continuity_reports = [
+            item for item in story.character_continuity_reports
+            if not (
+                item.character_id == report.character_id
+                and item.start_chapter == start_chapter
+                and item.end_chapter == end_chapter
+            )
+        ]
+        story.character_continuity_reports.append(report)
+        story.touch()
+        self.save_state()
+        return report
+
+    def apply_revision(
+        self,
+        chapter_index: int,
+        revised_content: str | None = None,
+        revision_instruction: str = "",
+    ) -> Chapter:
         """对指定章节应用修订：若未提供 revised_content 则用 Editor 代理基于评审报告自动修订。"""
         story = self._require_story()
         chapter = story.chapters.get(chapter_index)
         if chapter is None or not chapter.content:
             raise WorkflowError(f"Chapter {chapter_index} has no content to revise.")
         report = self.last_review.get(chapter_index) or self.request_review(chapter_index)
-        content = revised_content or self.editor.revise_chapter(chapter.content, report, story.style_guide)
+        content = revised_content or self.editor.revise_chapter(
+            chapter.content,
+            report,
+            story.style_guide,
+            revision_instruction=revision_instruction,
+        )
         chapter.update_content(content, status="revised", summary=chapter.summary)
         story.status = WorkflowState.REVISING.value
         story.touch()
         self._process_chapter_memory(story, chapter)
         self.save_state()
         return chapter
+
+    def create_revision_proposal(self, chapter_index: int, instruction: str) -> RevisionProposal:
+        """生成并验收修订候选，但不覆盖正式章节正文。"""
+        story = self._require_story()
+        chapter = story.chapters.get(chapter_index)
+        if chapter is None or not chapter.content:
+            raise WorkflowError(f"Chapter {chapter_index} has no content to revise.")
+        clean_instruction = instruction.strip()
+        if not clean_instruction:
+            raise WorkflowError("Revision instruction cannot be empty.")
+        outline = story.get_outline(chapter_index)
+        review = self.last_review.get(chapter_index) or self.critic.review_chapter(
+            chapter.content,
+            outline,
+            list(story.characters.values()),
+            [],
+            "",
+        )
+        candidate = self.editor.revise_chapter(
+            chapter.content,
+            review,
+            story.style_guide,
+            revision_instruction=clean_instruction,
+        )
+        validation = self.critic.review_chapter(
+            candidate,
+            outline,
+            list(story.characters.values()),
+            [],
+            "",
+        )
+        proposal = RevisionProposal(
+            story_id=str(story.id),
+            chapter_index=chapter_index,
+            source_version=chapter.version,
+            instruction=clean_instruction,
+            original_content=chapter.content,
+            proposed_content=candidate,
+            review_report=review,
+            validation_report=validation,
+        )
+        story.revision_proposals.append(proposal)
+        story.touch()
+        self.save_state()
+        return proposal
+
+    def get_revision_proposal(self, proposal_id: str) -> RevisionProposal | None:
+        """查找当前故事中的修订候选。"""
+        for proposal in self._require_story().revision_proposals:
+            if proposal.id == proposal_id:
+                return proposal
+        return None
+
+    def accept_revision_proposal(self, proposal_id: str) -> Chapter:
+        """用户批准候选后，将其应用到仍处于源版本的正式章节。"""
+        story = self._require_story()
+        proposal = self.get_revision_proposal(proposal_id)
+        if proposal is None:
+            raise WorkflowError(f"Revision proposal not found: {proposal_id}")
+        if proposal.status != "awaiting_approval":
+            raise WorkflowError(f"Revision proposal is already {proposal.status}.")
+        chapter = story.chapters.get(proposal.chapter_index)
+        if chapter is None or chapter.version != proposal.source_version:
+            raise WorkflowError("Chapter changed after this proposal was created; generate a new proposal.")
+        chapter.update_content(proposal.proposed_content, status="revised", summary=chapter.summary)
+        proposal.status = "accepted"
+        proposal.updated_at = utc_now()
+        story.status = WorkflowState.REVISING.value
+        self._process_chapter_memory(story, chapter)
+        story.touch()
+        self.save_state()
+        for run in story.agent_trace_runs:
+            if proposal_id in run.proposal_ids and run.status == "awaiting_approval":
+                run.status = "paused"
+                if run.plan is not None:
+                    run.plan.status = "paused"
+                self.continue_director_agent(run.id, max_steps=6)
+                break
+        return chapter
+
+    def reject_revision_proposal(self, proposal_id: str) -> RevisionProposal:
+        """拒绝候选，不修改章节正文。"""
+        proposal = self.get_revision_proposal(proposal_id)
+        if proposal is None:
+            raise WorkflowError(f"Revision proposal not found: {proposal_id}")
+        if proposal.status != "awaiting_approval":
+            raise WorkflowError(f"Revision proposal is already {proposal.status}.")
+        proposal.status = "rejected"
+        proposal.updated_at = utc_now()
+        story = self._require_story()
+        for run in story.agent_trace_runs:
+            if proposal_id in run.proposal_ids and run.status == "awaiting_approval":
+                run.status = "rejected"
+                run.final_summary = "User rejected the revision proposal; the official chapter was unchanged."
+                if run.plan is not None:
+                    run.plan.status = "rejected"
+        story.touch()
+        self.save_state()
+        return proposal
+
+    def revise_revision_proposal(self, proposal_id: str, instruction: str) -> RevisionProposal:
+        """拒绝旧候选，并结合用户反馈生成新的候选。"""
+        old = self.get_revision_proposal(proposal_id)
+        if old is None:
+            raise WorkflowError(f"Revision proposal not found: {proposal_id}")
+        feedback = instruction.strip()
+        if not feedback:
+            raise WorkflowError("Revision feedback cannot be empty.")
+        story = self._require_story()
+        linked_runs = [run for run in story.agent_trace_runs if proposal_id in run.proposal_ids]
+        combined = f"{old.instruction}\n用户追加要求：{feedback}"
+        self.reject_revision_proposal(proposal_id)
+        new_proposal = self.create_revision_proposal(old.chapter_index, combined)
+        for run in linked_runs:
+            if new_proposal.id not in run.proposal_ids:
+                run.proposal_ids.append(new_proposal.id)
+            run.status = "awaiting_approval"
+            run.final_summary = f"Created revised proposal {new_proposal.id}; waiting for approval."
+            if run.plan is not None:
+                run.plan.status = "awaiting_approval"
+        story.touch()
+        self.save_state()
+        return new_proposal
 
     def update_chapter_content(
         self,
@@ -618,8 +796,70 @@ class NovelForgeEngine:
             max_steps=max_steps,
             story=story,
             tool_registry=registry,
+            task_evaluator=self.task_evaluator,
         )
         story.agent_trace_runs.append(run)
+        story.touch()
+        self.save_state()
+        return run
+
+    def resume_director_agent(self, run_id: str, user_response: str, max_steps: int = 6) -> AgentTraceRun:
+        """用用户对追问的回答恢复同一次 Director 运行。"""
+        story = self._require_story()
+        run = self.get_director_run(run_id)
+        if run is None:
+            raise WorkflowError(f"Director trace run not found: {run_id}")
+        if run.status != "needs_user_input" or not run.pending_question:
+            raise WorkflowError("Director run is not waiting for user input.")
+        answer = user_response.strip()
+        if not answer:
+            raise WorkflowError("User response cannot be empty.")
+        question = run.pending_question
+        if run.pending_user_question is not None:
+            run.pending_user_question.answer = answer
+        run.user_responses.append(answer)
+        run.pending_question = ""
+        run.status = "running"
+        run.final_summary = ""
+        resumed_message = (
+            f"原始任务：{run.user_message}\n"
+            f"Director 追问：{question}\n"
+            f"用户回答：{answer}\n"
+            "请根据回答继续完成原始任务。"
+        )
+        registry = ToolRegistry(self)
+        run.plan = self.director.create_plan(story, resumed_message, registry.list_specs())
+        self.director.run(
+            story_id=str(story.id),
+            user_message=resumed_message,
+            max_steps=max_steps,
+            story=story,
+            tool_registry=registry,
+            task_evaluator=self.task_evaluator,
+            existing_run=run,
+        )
+        story.touch()
+        self.save_state()
+        return run
+
+    def continue_director_agent(self, run_id: str, max_steps: int = 6) -> AgentTraceRun:
+        """从持久化检查点继续一个 paused Director 运行。"""
+        story = self._require_story()
+        run = self.get_director_run(run_id)
+        if run is None:
+            raise WorkflowError(f"Director trace run not found: {run_id}")
+        if run.status not in {"paused", "running"}:
+            raise WorkflowError(f"Director run cannot continue from status {run.status}.")
+        registry = ToolRegistry(self)
+        self.director.run(
+            story_id=str(story.id),
+            user_message=run.user_message,
+            max_steps=max_steps,
+            story=story,
+            tool_registry=registry,
+            task_evaluator=self.task_evaluator,
+            existing_run=run,
+        )
         story.touch()
         self.save_state()
         return run
@@ -640,7 +880,10 @@ class NovelForgeEngine:
         run = self.get_director_run(run_id)
         if run is None:
             raise WorkflowError(f"Director trace run not found: {run_id}")
-        output = Path(output_path or self.state_dir / f"{run.id}-trace.json")
+        story = self._require_story()
+        output = Path(output_path) if output_path else self.repository.artifact_path(
+            story.id, "traces", f"{run.id}.json"
+        )
         return write_trace_json(run, output)
 
     def export_director_debug_report(self, run_id: str, output_path: str | Path | None = None) -> Path:
@@ -648,7 +891,10 @@ class NovelForgeEngine:
         run = self.get_director_run(run_id)
         if run is None:
             raise WorkflowError(f"Director trace run not found: {run_id}")
-        output = Path(output_path or self.state_dir / f"{run.id}-debug.md")
+        story = self._require_story()
+        output = Path(output_path) if output_path else self.repository.artifact_path(
+            story.id, "traces", f"{run.id}.debug.md"
+        )
         return write_debug_report(run, output)
 
     def _execute_agent_task(self, task, end_chapter: int) -> str:
@@ -800,7 +1046,9 @@ class NovelForgeEngine:
     def export_markdown(self, output_path: str | Path | None = None) -> Path:
         """将当前故事的所有章节导出为单个 Markdown 文件。"""
         story = self._require_story()
-        output = Path(output_path or self.state_dir / f"{self._safe_export_filename(story.title)}.md")
+        output = Path(output_path) if output_path else self.repository.artifact_path(
+            story.id, "exports", f"{self._safe_export_filename(story.title)}.md"
+        )
         lines = [f"# {story.title}", "", f"> {story.premise}", ""]
         for index in sorted(story.chapters):
             chapter = story.chapters[index]
@@ -849,9 +1097,8 @@ class NovelForgeEngine:
                     para.paragraph_format.first_line_indent = Cm(0.74)
                     para.paragraph_format.line_spacing = 1.5
 
-        output = Path(
-            output_path
-            or (self.state_dir.parent / f"{self._safe_export_filename(story.title)}.docx")
+        output = Path(output_path) if output_path else self.repository.artifact_path(
+            story.id, "exports", f"{self._safe_export_filename(story.title)}.docx"
         )
         doc.save(str(output))
         return output
@@ -882,6 +1129,79 @@ class NovelForgeEngine:
         if self.story and str(self.story.id) == story_id_str:
             self.story = None
         return result
+
+    def rebuild_derived_indexes(self, story_id: str | UUID | None = None) -> dict[str, int | str]:
+        """Rebuild all disposable indexes from canonical SQLite-backed story state.
+
+        This operation deliberately reads only Story data and never treats an existing vector, FTS,
+        or graph entry as authoritative.
+        """
+        if story_id is not None and (self.story is None or str(self.story.id) != str(story_id)):
+            self.load_state(story_id)
+        story = self._require_story()
+        story_id_str = str(story.id)
+        self.vector_store.delete_story(story_id_str)
+        self.text_store.delete_story(story_id_str)
+        self.graph_store.delete_story(story_id_str)
+        indexed_chapters = 0
+        for chapter in story.chapters.values():
+            if chapter.content:
+                self._index_chapter(story, chapter)
+                indexed_chapters += 1
+        cards = story.memory_cards
+        if cards:
+            self.vector_store.add(
+                "memory_cards",
+                [card.content for card in cards],
+                [
+                    {
+                        "story_id": story_id_str,
+                        "type": card.type,
+                        "chapter": card.chapter,
+                        "importance": card.importance,
+                        "entities": ",".join(card.entities),
+                        "tags": ",".join(card.tags),
+                    }
+                    for card in cards
+                ],
+                [card.id if card.id.startswith(f"{story_id_str}:") else f"{story_id_str}:memory_card:{card.id}" for card in cards],
+            )
+        characters = list(story.characters.values())
+        if characters:
+            self.vector_store.add(
+                "characters",
+                [
+                    " ".join(filter(None, [item.name, item.appearance, item.personality, item.motivation, item.weakness, item.arc]))
+                    for item in characters
+                ],
+                [{"story_id": story_id_str, "type": "character", "character_id": item.id} for item in characters],
+                [f"{story_id_str}:character:{item.id}" for item in characters],
+            )
+            for character in characters:
+                attrs = character.model_dump()
+                attrs["story_id"] = story_id_str
+                self.graph_store.add_node(f"{story_id_str}:character:{character.id}", attrs)
+        world_settings = story.world_settings
+        if world_settings:
+            self.vector_store.add(
+                "world",
+                [item.content for item in world_settings],
+                [{"story_id": story_id_str, "type": "world", "category": item.category, **item.metadata} for item in world_settings],
+                [f"{story_id_str}:world:{item.id}" for item in world_settings],
+            )
+        pending = [
+            int(event["id"]) for event in self.repository.pending_index_events()
+            if str(event["story_id"]) == story_id_str
+        ]
+        self.repository.mark_index_events_processed(pending)
+        return {
+            "story_id": story_id_str,
+            "chapters": indexed_chapters,
+            "memory_cards": len(cards),
+            "characters": len(characters),
+            "world_settings": len(world_settings),
+            "events_processed": len(pending),
+        }
 
     def _index_chapter(self, story: Story, chapter: Chapter) -> None:
         """将章节内容写入全文索引和向量存储用于后续语义检索。"""

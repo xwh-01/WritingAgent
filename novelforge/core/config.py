@@ -33,7 +33,15 @@ class MemoryConfig(BaseModel):
     text_store: str = "sqlite_fts"
     persist_directory: str = "./novelforge/storage/chroma_data"
     graph_directory: str = "./novelforge/storage/graph_data"
-    sqlite_path: str = "./novelforge/storage/story_state/fts.sqlite3"
+    sqlite_path: str = "./novelforge/storage/indexes/fts.sqlite3"
+
+
+class StorageConfig(BaseModel):
+    """Canonical state and artifact paths; indexes are configured separately in MemoryConfig."""
+
+    database_path: str = "./novelforge/storage/novelforge.db"
+    artifact_directory: str = "./novelforge/storage/artifacts"
+    legacy_state_directory: str = "./novelforge/storage/story_state"
 
 
 class StoryConfig(BaseModel):
@@ -102,6 +110,7 @@ class AppConfig(BaseModel):
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
     story: StoryConfig = Field(default_factory=StoryConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     auto_revisor: AutoRevisorConfig = Field(default_factory=AutoRevisorConfig)
@@ -144,6 +153,11 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
             "persist_directory": os.getenv("NOVELFORGE_CHROMA_DIR"),
             "graph_directory": os.getenv("NOVELFORGE_GRAPH_DIR"),
             "sqlite_path": os.getenv("NOVELFORGE_SQLITE_PATH"),
+        },
+        "storage": {
+            "database_path": os.getenv("NOVELFORGE_DATABASE_PATH"),
+            "artifact_directory": os.getenv("NOVELFORGE_ARTIFACT_DIR"),
+            "legacy_state_directory": os.getenv("NOVELFORGE_LEGACY_STATE_DIR"),
         },
         "logging": {"level": os.getenv("NOVELFORGE_LOG_LEVEL")},
     }

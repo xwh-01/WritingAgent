@@ -21,7 +21,8 @@ def test_repository_delete_removes_story_file(tmp_path) -> None:
 
     assert path.exists()
     assert repository.delete(story.id)
-    assert not path.exists()
+    assert not repository.exists(story.id)
+    assert path.exists()  # The shared SQLite database remains; only this story record is removed.
     assert not repository.delete(story.id)
 
 

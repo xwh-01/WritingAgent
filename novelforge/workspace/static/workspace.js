@@ -6,6 +6,7 @@ const state = {
     lastJobEvents: [],
     polling: null,
     directorRunning: false,
+    pendingDirectorRun: null,
 };
 
 const els = {};
@@ -791,6 +792,7 @@ async function runDirectorAgent() {
             max_steps: 6,
         });
         await loadStory(state.story.id);
+        state.pendingDirectorRun = run.status === "needs_user_input" ? run : null;
         renderAgentTrace(run);
         renderDirectorResult(run);
         setStatus(run.status || "Director Agent finished");
@@ -811,6 +813,70 @@ async function runDirectorAgent() {
         setStatus("Director Agent failed");
     } finally {
         setDirectorRunning(false);
+    }
+}
+
+async function resumeDirectorAgent(runId) {
+    const input = els.agentTrace?.querySelector("[data-director-answer]");
+    const answer = input?.value.trim() || "";
+    if (!answer || !state.story) return;
+    setDirectorRunning(true);
+    setStatus("Director Agent 正在根据回答继续执行");
+    try {
+        const run = await postJson(`/stories/${state.story.id}/agent/runs/${runId}/resume`, {
+            user_response: answer,
+            max_steps: 6,
+        });
+        await loadStory(state.story.id);
+        state.pendingDirectorRun = run.status === "needs_user_input" ? run : null;
+        renderAgentTrace(run);
+        renderDirectorResult(run);
+        setStatus(run.status || "Director Agent finished");
+    } catch (error) {
+        setStatus(error.message || "Director Agent 恢复失败");
+    } finally {
+        setDirectorRunning(false);
+    }
+}
+
+async function continueDirectorAgent(runId) {
+    if (!state.story) return;
+    setDirectorRunning(true);
+    try {
+        const run = await postJson(`/stories/${state.story.id}/agent/runs/${runId}/continue`, { max_steps: 6 });
+        await loadStory(state.story.id);
+        renderAgentTrace(run);
+        renderDirectorResult(run);
+        setStatus(run.status || "Director Agent finished");
+    } catch (error) {
+        setStatus(error.message || "Director Agent 继续执行失败");
+    } finally {
+        setDirectorRunning(false);
+    }
+}
+
+async function handleRevisionProposal(proposalId, action) {
+    if (!state.story) return;
+    let path = action;
+    let body = {};
+    if (action === "revise") {
+        const instruction = prompt("还需要怎样调整这份候选稿？");
+        if (!instruction?.trim()) return;
+        body = { instruction: instruction.trim() };
+    }
+    setStatus(`Revision proposal: ${action}`);
+    try {
+        const result = await postJson(
+            `/stories/${state.story.id}/revision-proposals/${proposalId}/${path}`,
+            body,
+        );
+        await loadStory(state.story.id);
+        if (action === "revise") {
+            renderRevisionProposal(result);
+        }
+        setStatus(action === "accept" ? "修订稿已应用" : action === "reject" ? "已保留原正文" : "已生成新候选稿");
+    } catch (error) {
+        setStatus(error.message || "候选稿处理失败");
     }
 }
 
@@ -893,6 +959,22 @@ function renderAgentTrace(source = null) {
                 <span>${escapeHtml(directorRun.status || "completed")} · ${(directorRun.steps || []).length} steps</span>
             </div>
         `;
+        const plan = directorRun.plan ? `
+            <div class="trace-note">
+                <strong>执行计划</strong>
+                <div>${escapeHtml(directorRun.plan.objective || "")}</div>
+                ${(directorRun.plan.success_criteria || []).map(item => `<div>✓ ${escapeHtml(item)}</div>`).join("")}
+                <div class="trace-meta">replans: ${directorRun.plan.replan_count || 0}/${directorRun.plan.max_replans || 0}</div>
+                ${(directorRun.plan.tasks || []).map((task, index) => `
+                    <div class="event-row">
+                        ${index + 1}. <strong>${escapeHtml(task.selected_tool || "question")}</strong>
+                        · ${escapeHtml(task.status)} · attempts ${task.attempts || 0}/${task.max_attempts || 0}
+                        <div>${escapeHtml(task.description || "")}</div>
+                        ${task.evaluation?.feedback ? `<div class="trace-meta">验收：${escapeHtml(task.evaluation.feedback)}</div>` : ""}
+                    </div>
+                `).join("")}
+            </div>
+        ` : "";
         const rows = (directorRun.steps || []).map(step => {
             const state = step.success ? "completed" : "failed";
             const args = Object.keys(step.tool_args || {}).length ? JSON.stringify(step.tool_args, null, 2) : "{}";
@@ -924,7 +1006,34 @@ function renderAgentTrace(source = null) {
                 <div>${escapeHtml(directorRun.final_summary)}</div>
             </div>
         ` : "";
-        els.agentTrace.innerHTML = header + running + rows + final;
+        const question = directorRun.status === "needs_user_input" ? `
+            <div class="trace-final director-question">
+                <strong>Director 需要你的回答</strong>
+                <div>${escapeHtml(directorRun.pending_question || directorRun.final_summary || "请补充信息")}</div>
+                <textarea data-director-answer rows="3" placeholder="在这里回答追问"></textarea>
+                <button type="button" data-resume-director="${escapeHtml(directorRun.id)}">回答并继续</button>
+            </div>
+        ` : "";
+        const checkpoint = directorRun.status === "paused" ? `
+            <div class="trace-final">
+                <strong>运行已保存检查点</strong>
+                <button type="button" data-continue-director="${escapeHtml(directorRun.id)}">继续完成任务</button>
+            </div>
+        ` : "";
+        els.agentTrace.innerHTML = header + plan + running + rows + final + question + checkpoint;
+        const resumeButton = els.agentTrace.querySelector("[data-resume-director]");
+        if (resumeButton) {
+            resumeButton.addEventListener("click", () => resumeDirectorAgent(resumeButton.dataset.resumeDirector));
+        }
+        const continueButton = els.agentTrace.querySelector("[data-continue-director]");
+        if (continueButton) {
+            continueButton.addEventListener("click", () => continueDirectorAgent(continueButton.dataset.continueDirector));
+        }
+        const proposalId = (directorRun.proposal_ids || []).at(-1);
+        if (proposalId) {
+            const proposal = (state.story?.revision_proposals || []).find(item => item.id === proposalId);
+            if (proposal) renderRevisionProposal(proposal);
+        }
         return;
     }
     const run = source?.autonomous_result || (source?.tasks ? source : latestAgenticRun());
@@ -987,6 +1096,34 @@ function renderAgentTrace(source = null) {
     renderIcons();
 }
 
+function renderRevisionProposal(proposal) {
+    if (!proposal || !els.qualityReport) return;
+    const issues = [
+        ...(proposal.validation_report?.logic_issues || []),
+        ...(proposal.validation_report?.character_issues || []),
+        ...(proposal.validation_report?.pacing_issues || []),
+    ];
+    const actions = proposal.status === "awaiting_approval" ? `
+        <div class="director-actions proposal-actions">
+            <button type="button" data-proposal-action="accept">接受并应用</button>
+            <button type="button" data-proposal-action="revise">继续调整</button>
+            <button type="button" data-proposal-action="reject">拒绝</button>
+        </div>
+    ` : `<div class="trace-meta">状态：${escapeHtml(proposal.status)}</div>`;
+    els.qualityReport.innerHTML = `
+        <div class="score-row"><strong>修订候选 · 第${proposal.chapter_index}章</strong></div>
+        <div class="event-row">要求：${escapeHtml(proposal.instruction)}</div>
+        <div class="event-row">Critic 验收：${escapeHtml(proposal.validation_report?.verdict || "未给出结论")}</div>
+        ${issues.map(issue => `<div class="issue-row">${escapeHtml(issue)}</div>`).join("")}
+        <details><summary>查看原正文</summary><pre>${escapeHtml(proposal.original_content)}</pre></details>
+        <details open><summary>查看候选修订稿</summary><pre>${escapeHtml(proposal.proposed_content)}</pre></details>
+        ${actions}
+    `;
+    els.qualityReport.querySelectorAll("[data-proposal-action]").forEach(button => {
+        button.addEventListener("click", () => handleRevisionProposal(proposal.id, button.dataset.proposalAction));
+    });
+}
+
 function latestDirectorRun() {
     const runs = state.story?.agent_trace_runs || [];
     return runs.length ? runs[runs.length - 1] : null;
@@ -1003,6 +1140,14 @@ function renderDirectorResult(run) {
     ];
     for (const step of run.steps || []) {
         rows.push(`<div class="event-row">Step ${step.step}: ${escapeHtml(step.selected_tool)} · ${step.success ? "success" : "error"} · ${escapeHtml(step.observation || step.error || "")}</div>`);
+    }
+    const characterReport = (state.story?.character_continuity_reports || []).at(-1);
+    if (characterReport && (run.steps || []).some(step => step.selected_tool === "analyze_character_continuity")) {
+        rows.push(`<div class="score-row"><strong>角色轨迹审计 · ${escapeHtml(characterReport.character_name || characterReport.character_id)}</strong> · 第${characterReport.start_chapter}-${characterReport.end_chapter}章 · ${characterReport.passed ? "passed" : "needs repair"}</div>`);
+        rows.push(`<div class="event-row">${escapeHtml(characterReport.summary || "")}</div>`);
+        for (const issue of characterReport.issues || []) {
+            rows.push(`<div class="issue-row">第${issue.chapter_index}章 · ${escapeHtml(issue.dimension)} · ${escapeHtml(issue.description)}${issue.evidence ? `<br><small>${escapeHtml(issue.evidence)}</small>` : ""}</div>`);
+        }
     }
     els.qualityReport.innerHTML = rows.join("");
 }

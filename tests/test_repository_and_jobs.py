@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from novelforge.core.config import AppConfig, AutoRevisorConfig as AppAutoRevisorConfig
 from novelforge.core.models import ChapterOutline
+from novelforge.core.models import Story
 from novelforge.orchestrator.engine import NovelForgeEngine
 from novelforge.orchestrator.job_registry import AutoRevisionJobRegistry
 from novelforge.storage.repository import StoryRepository
@@ -23,6 +24,45 @@ def test_story_repository_lists_and_exports_report(test_config: AppConfig) -> No
     assert any(record.id == str(story.id) for record in records)
     assert output.exists()
     assert "Auto-Revision Report" in output.read_text(encoding="utf-8")
+
+
+def test_repository_imports_legacy_json_once_and_records_index_event(tmp_path) -> None:
+    legacy_dir = tmp_path / "legacy"
+    legacy_dir.mkdir()
+    story = Story(title="Legacy", premise="A migration test")
+    (legacy_dir / f"{story.id}.json").write_text(story.model_dump_json(), encoding="utf-8")
+    repository = StoryRepository(
+        database_path=tmp_path / "novelforge.db",
+        artifact_directory=tmp_path / "artifacts",
+        legacy_state_directory=legacy_dir,
+    )
+
+    loaded = repository.load(story.id)
+    events = repository.pending_index_events()
+
+    assert loaded.id == story.id
+    assert repository.exists(story.id)
+    assert any(event["event_type"] == "legacy_json_imported" for event in events)
+    assert repository.database_path.exists()
+
+
+def test_rebuild_indexes_uses_canonical_story_state(test_config: AppConfig) -> None:
+    engine = NovelForgeEngine(config=test_config)
+    story = engine.start_new_story("A keeper protects a secret city.", title="Index Rebuild")
+    story.outlines = [
+        ChapterOutline(chapter_index=1, title="First Save", summary="The keeper finds a secret.", conflict="Danger arrives.")
+    ]
+    engine.update_chapter_content(1, "alpha index rebuild evidence")
+    engine.vector_store.delete_story(str(story.id))
+    engine.text_store.delete_story(str(story.id))
+    engine.graph_store.delete_story(str(story.id))
+
+    result = engine.rebuild_derived_indexes()
+
+    assert result["chapters"] == 1
+    assert result["events_processed"] >= 1
+    assert engine.text_store.search("alpha", story_id=str(story.id))
+    assert engine.vector_store.query("plot_summaries", "secret", story_id=str(story.id))
 
 
 def test_auto_revision_job_registry_runs_background_job(test_config: AppConfig) -> None:

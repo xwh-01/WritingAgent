@@ -15,9 +15,94 @@ class MockLLMClient(LLMClient):
     def chat_completion(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         """根据提示词中的关键词返回对应的预设 JSON 或文本响应。"""
         prompt = "\n".join(message.get("content", "") for message in messages)
+        if '"marker": "director_plan"' in prompt:
+            try:
+                payload = json.loads(messages[-1].get("content", "{}"))
+            except Exception:
+                payload = {}
+            objective = str(payload.get("objective") or "")
+            lowered = objective.lower()
+            chapter = self._extract_chapter(objective, 0)
+            tasks = []
+            character_names = (payload.get("story_state") or {}).get("characters") or []
+            selected_character = next(
+                (name for name in character_names if str(name).lower() in lowered), None
+            )
+            range_match = re.search(r"第?\s*(\d+)\s*(?:到|至|[-~])\s*第?\s*(\d+)\s*章?", objective)
+            if any(token in objective for token in ("人设", "角色一致", "角色连续")) or "character" in lowered:
+                if not selected_character:
+                    tasks = [{"id": "task-question", "description": "你想检查哪位角色的人设或状态轨迹？", "selected_tool": "ask_user"}]
+                else:
+                    start = int(range_match.group(1)) if range_match else 1
+                    end = int(range_match.group(2)) if range_match else max(chapter, 1)
+                    tasks = [{
+                        "id": "task-character-arc",
+                        "description": f"审计 {selected_character} 在第{start}到第{end}章的角色连续性",
+                        "selected_tool": "analyze_character_continuity",
+                        "tool_args": {"character": selected_character, "start_chapter": start, "end_chapter": max(start, end)},
+                        "success_criteria": ["给出跨章节角色轨迹和带证据的问题", "定位需要修订的章节"],
+                    }]
+            elif any(token in lowered for token in ("改", "修", "revise")):
+                if chapter <= 0:
+                    tasks = [{"id": "task-question", "description": "你想修改第几章？", "selected_tool": "ask_user"}]
+                else:
+                    tasks = [
+                        {"id": "task-inspect", "description": f"读取第{chapter}章当前正文", "selected_tool": "inspect_chapter", "tool_args": {"chapter_index": chapter, "include_content": True}, "success_criteria": ["取得当前有效正文和版本"]},
+                        {"id": "task-revise", "description": f"生成第{chapter}章候选修订稿", "selected_tool": "revise_chapter", "tool_args": {"chapter_index": chapter, "revision_instruction": objective}, "dependencies": ["task-inspect"], "success_criteria": ["候选稿满足用户要求", "正式正文尚未覆盖"]},
+                    ]
+            elif "伏笔" in objective or "foreshadow" in lowered:
+                tasks = [{"id": "task-foreshadow", "description": "检查未回收伏笔", "selected_tool": "list_foreshadowings", "tool_args": {"status": "pending"}, "success_criteria": ["返回未回收伏笔"]}]
+            elif any(token in lowered for token in ("检查", "审查", "review", "continuity", "连续")):
+                if chapter <= 0:
+                    tasks = [{"id": "task-question", "description": "你想检查第几章？", "selected_tool": "ask_user"}]
+                else:
+                    tasks = [{"id": "task-review", "description": f"审查第{chapter}章", "selected_tool": "review_chapter", "tool_args": {"chapter_index": chapter}, "success_criteria": ["给出结构化问题和建议"]}]
+                    if "continuity" in lowered or "连续" in objective:
+                        tasks.append({"id": "task-continuity", "description": f"检查第{chapter}章连续性", "selected_tool": "audit_continuity", "tool_args": {"chapter_index": chapter}, "dependencies": ["task-review"], "success_criteria": ["给出连续性风险和证据"]})
+            elif any(token in lowered for token in ("继续", "下一章", "write")):
+                current = int((payload.get("story_state") or {}).get("current_chapter") or 0)
+                target = max(current + 1, 1)
+                tasks = [
+                    {"id": "task-outline", "description": f"确保大纲覆盖第{target}章", "selected_tool": "create_outline", "tool_args": {"num_chapters": target}, "success_criteria": [f"存在第{target}章大纲"]},
+                    {"id": "task-write", "description": f"完成第{target}章写作和质量门", "selected_tool": "auto_write_chapter", "tool_args": {"chapter_index": target}, "dependencies": ["task-outline"], "success_criteria": ["章节正文已生成", "质量门执行完成"]},
+                ]
+            else:
+                tasks = [{"id": "task-status", "description": "读取项目状态", "selected_tool": "show_status", "success_criteria": ["返回当前项目状态"]}]
+            return json.dumps({
+                "objective": objective,
+                "success_criteria": ["完成用户明确目标", "保留故事事实与连续性"],
+                "tasks": tasks,
+                "status": "planned",
+                "assumptions": [],
+            }, ensure_ascii=False)
+        if '"marker": "director_task_evaluation"' in prompt:
+            try:
+                payload = json.loads(messages[-1].get("content", "{}"))
+            except Exception:
+                payload = {}
+            task = payload.get("task") or {}
+            result = payload.get("tool_result") or {}
+            criteria = task.get("success_criteria") or ["工具产生有效结果"]
+            observation = str(result.get("observation") or result.get("output_summary") or "")
+            return json.dumps({
+                "passed": bool(observation),
+                "criterion_results": [
+                    {"criterion": criterion, "passed": bool(observation), "evidence": observation[:300]}
+                    for criterion in criteria
+                ],
+                "recoverable": True,
+                "recommended_action": "await_approval" if result.get("requires_approval") else "complete",
+                "feedback": "" if observation else "工具没有返回可验收的观察结果。",
+            }, ensure_ascii=False)
         if "director_decision" in prompt:
+            request_match = re.search(r'"user_message"\s*:\s*("(?:\\.|[^"\\])*")', prompt)
+            try:
+                director_request = json.loads(request_match.group(1)) if request_match else prompt
+            except Exception:
+                director_request = prompt
+            director_request_lower = director_request.lower()
             step = self._extract_step(prompt)
-            if "伏笔" in prompt:
+            if "伏笔" in director_request or "foreshadow" in director_request_lower:
                 intent, tool, args, reason, cont = (
                     "inspect_foreshadowing",
                     "list_foreshadowings",
@@ -25,7 +110,7 @@ class MockLLMClient(LLMClient):
                     "The user asked to inspect unresolved foreshadowings.",
                     False,
                 )
-            elif "检查" in prompt or "审查" in prompt:
+            elif "检查" in director_request or "审查" in director_request or "review" in director_request_lower:
                 intent, tool, args, reason, cont = (
                     "review_chapter",
                     "review_chapter",
@@ -33,7 +118,7 @@ class MockLLMClient(LLMClient):
                     "The user asked to inspect chapter quality.",
                     False,
                 )
-            elif "改" in prompt or "修" in prompt:
+            elif "改" in director_request or "修" in director_request or "revise" in director_request_lower:
                 intent, tool, args, reason, cont = (
                     "revise_chapter",
                     "revise_chapter",
@@ -41,7 +126,7 @@ class MockLLMClient(LLMClient):
                     "The user asked to revise a chapter.",
                     False,
                 )
-            elif "继续" in prompt or "下一章" in prompt:
+            elif "继续" in director_request or "下一章" in director_request or "write" in director_request_lower:
                 if step <= 1:
                     intent, tool, args, reason, cont = (
                         "prepare_next_chapter",
@@ -353,8 +438,12 @@ class MockLLMClient(LLMClient):
 
     def _extract_chapter(self, text: str, default: int) -> int:
         """从文本中提取章节序号，未匹配时返回默认值。"""
-        match = re.search(r"(?:第)?\s*(\d+)\s*(?:章|chapter|ch)", text, re.IGNORECASE)
-        return int(match.group(1)) if match else default
+        match = re.search(
+            r"(?:第\s*)?(\d+)\s*(?:章|chapter|ch)|(?:chapter|ch)\s*(\d+)",
+            text,
+            re.IGNORECASE,
+        )
+        return int(match.group(1) or match.group(2)) if match else default
 
     def _last_user_text(self, messages: list[dict[str, str]]) -> str:
         """获取对话记录中最后一条 user 角色的消息内容。"""

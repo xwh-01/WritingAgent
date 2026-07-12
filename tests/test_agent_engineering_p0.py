@@ -5,7 +5,7 @@ from typing import Any
 
 from evals.run_eval import CASES_DIR, run_all
 from novelforge.core.config import AppConfig, AutoRevisorConfig
-from novelforge.core.models import ChapterOutline
+from novelforge.core.models import AgentTraceRun, ChapterOutline, DirectorPlan, DirectorTask
 from novelforge.llm.base import LLMClient
 from novelforge.orchestrator.engine import NovelForgeEngine
 from novelforge.orchestrator.tool_registry import ToolRegistry
@@ -71,64 +71,39 @@ def test_export_filename_sanitizes_title(test_config: AppConfig) -> None:
 def test_director_repairs_missing_precondition_with_outline(test_config: AppConfig) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("A goalkeeper needs a first chapter.", title="Recover Outline")
-    engine.director.llm = SequencedDirectorLLM(
-        [
-            {
-                "step": 1,
-                "intent": "write_without_outline",
-                "selected_tool": "auto_write_chapter",
-                "reasoning_summary": "Try writing chapter 1.",
-                "tool_args": {"chapter_index": 1},
-                "should_continue": True,
-            },
-            {
-                "step": 3,
-                "intent": "show_status",
-                "selected_tool": "show_status",
-                "reasoning_summary": "Show status after recovery.",
-                "tool_args": {},
-                "should_continue": False,
-            },
-        ]
-    )
-
     run = engine.run_director_agent("write chapter one", max_steps=3)
 
     assert run.status == "completed"
-    assert any(event["stage"] == "reflect_replan" for event in run.trace_events)
     assert any(event["selected_tool"] == "create_outline" for event in run.trace_events)
+    assert [task.selected_tool for task in run.plan.tasks] == ["create_outline", "auto_write_chapter"]
     assert story.outlines
 
 
 def test_director_handles_tool_arg_invalid_without_crashing(test_config: AppConfig) -> None:
     engine = NovelForgeEngine(config=test_config)
-    engine.start_new_story("A validation recovery story.", title="Arg Recovery")
-    engine.director.llm = SequencedDirectorLLM(
-        [
-            {
-                "step": 1,
-                "intent": "bad_args",
-                "selected_tool": "create_beats",
-                "reasoning_summary": "Bad chapter index from model.",
-                "tool_args": {"chapter_index": "bad"},
-                "should_continue": True,
-            },
-            {
-                "step": 4,
-                "intent": "show_status",
-                "selected_tool": "show_status",
-                "reasoning_summary": "Show status after arg repair.",
-                "tool_args": {},
-                "should_continue": False,
-            },
-        ]
+    story = engine.start_new_story("A validation recovery story.", title="Arg Recovery")
+    run = AgentTraceRun(
+        id="invalid-plan-run",
+        story_id=str(story.id),
+        user_message="make beats",
+        status="paused",
+        plan=DirectorPlan(
+            objective="make beats",
+            tasks=[DirectorTask(
+                description="invalid model arguments",
+                selected_tool="create_beats",
+                tool_args={"chapter_index": "bad"},
+                max_attempts=2,
+            )],
+        ),
     )
+    story.agent_trace_runs.append(run)
 
-    run = engine.run_director_agent("make beats", max_steps=4)
+    run = engine.continue_director_agent(run.id, max_steps=4)
 
-    assert run.status in {"completed", "max_steps_reached"}
+    assert run.status == "failed"
     assert any(step.error_type == "tool_arg_invalid" for step in run.steps)
-    assert any(event["stage"] == "reflect_replan" for event in run.trace_events)
+    assert run.plan.tasks[0].attempts == 2
 
 
 def test_auto_revisor_writes_round_trace(test_config: AppConfig) -> None:

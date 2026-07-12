@@ -75,10 +75,13 @@ Director Agent 是另一条入口：
 
 ```text
 自然语言任务
-  -> NovelDirectorAgent 决策工具
-  -> ToolRegistry 校验参数并执行工具
-  -> Trace 记录每一步
-  -> 可恢复错误时反思并重试/补前置步骤
+  -> NovelDirectorAgent 生成完整 DirectorPlan
+  -> 按依赖执行专业 Agent 工具
+  -> TaskEvaluatorAgent 按成功标准验收证据
+  -> 未通过时重试、补前置任务或重新规划
+  -> 信息不足时追问并持久化暂停
+  -> 正文变更生成 RevisionProposal 并等待批准
+  -> 所有任务通过后才标记 completed
 ```
 
 ## 面试讲法

@@ -18,6 +18,7 @@ def list_agents() -> dict[str, list[str]]:
             "editor",
             "supervisor",
             "director",
+            "task_evaluator",
             "continuity_auditor",
             "memory_extractor",
             "context",
