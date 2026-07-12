@@ -46,6 +46,33 @@ def test_repository_imports_legacy_json_once_and_records_index_event(tmp_path) -
     assert repository.database_path.exists()
 
 
+def test_story_aggregate_migrates_flat_state_to_domain_boundaries() -> None:
+    legacy = {
+        "title": "Nested Story",
+        "premise": "A domain boundary migration test",
+        "outlines": [],
+        "chapters": {},
+        "characters": {},
+        "character_facts": [],
+        "memory_cards": [],
+        "auto_revision_reports": {},
+        "revision_proposals": [],
+        "agent_runs": [],
+        "agent_trace_runs": [],
+    }
+
+    story = Story.model_validate(legacy)
+    serialized = story.model_dump()
+
+    assert story.content.chapters == {}
+    assert story.memory.facts == []
+    assert story.quality.revision_proposals == []
+    assert story.agent_runs.director == []
+    assert set(("content", "memory", "quality", "agent_runs")).issubset(serialized)
+    assert "chapters" not in serialized
+    assert "character_facts" not in serialized
+
+
 def test_rebuild_indexes_uses_canonical_story_state(test_config: AppConfig) -> None:
     engine = NovelForgeEngine(config=test_config)
     story = engine.start_new_story("A keeper protects a secret city.", title="Index Rebuild")

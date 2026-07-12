@@ -20,6 +20,7 @@ from novelforge.agents import (
     TaskEvaluatorAgent,
     WriterAgent,
 )
+from novelforge.application import AgentRunService, ContentService, MemoryService, QualityService
 from novelforge.context.assembler import ContextAssembler
 from novelforge.core.config import AppConfig, load_config
 from novelforge.core.exceptions import PersistenceError, WorkflowError
@@ -94,6 +95,10 @@ class NovelForgeEngine:
         self.editor = EditorAgent(self.llm)
         self.continuity_auditor = ContinuityAuditorAgent(self.llm)
         self.character_arc_auditor = CharacterArcAuditorAgent(self.llm)
+        self.content_service = ContentService()
+        self.memory_service = MemoryService()
+        self.quality_service = QualityService()
+        self.agent_run_service = AgentRunService()
         self.story: Story | None = None
         self.last_review: dict[int, ReviewReport] = {}
         self.current_auto_revisor: AutoRevisor | None = None
@@ -128,7 +133,7 @@ class NovelForgeEngine:
         story = self._require_story()
         target_count = num_chapters or self.config.story.default_chapters
         if force:
-            story.outlines = self.planner.generate_outline(story.premise, target_count)
+            self.content_service.set_outlines(story, self.planner.generate_outline(story.premise, target_count))
         else:
             self._append_missing_outlines(story, target_count)
         story.status = WorkflowState.OUTLINE_GENERATED.value
@@ -145,8 +150,7 @@ class NovelForgeEngine:
         beats = self.planner.generate_beats(outline, context)
         chapter = story.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
         chapter.beats = beats
-        story.chapters[chapter_index] = chapter
-        story.current_chapter = chapter_index
+        self.content_service.save_chapter(story, chapter)
         story.status = WorkflowState.CHAPTER_BEATS_READY.value
         story.touch()
         self.save_state()
@@ -166,8 +170,7 @@ class NovelForgeEngine:
         )
         content = self._polish_draft_if_enabled(story, chapter_index, content)
         chapter.update_content(content, status="draft", summary=outline.summary)
-        story.chapters[chapter_index] = chapter
-        story.current_chapter = chapter_index
+        self.content_service.save_chapter(story, chapter)
         story.status = WorkflowState.CHAPTER_DRAFT.value
         self._process_chapter_memory(story, chapter)
         story.touch()
@@ -182,7 +185,7 @@ class NovelForgeEngine:
             return existing
         outline = story.get_outline(chapter_index)
         contract = self.planner.generate_chapter_contract(story, outline)
-        story.chapter_contracts[chapter_index] = contract
+        self.content_service.save_contract(story, contract)
         story.touch()
         self.save_state()
         return contract
@@ -192,7 +195,7 @@ class NovelForgeEngine:
         story = self._require_story()
         story.get_outline(chapter_index)
         contract.chapter_index = chapter_index
-        story.chapter_contracts[chapter_index] = contract
+        self.content_service.save_contract(story, contract)
         story.touch()
         self.save_state()
         return contract
@@ -207,7 +210,7 @@ class NovelForgeEngine:
     def upsert_character_fact(self, fact: CharacterFact) -> CharacterFact:
         """保存用户确认的人物事实并持久化。"""
         story = self._require_story()
-        saved = self.longform_manager.fact_ledger.upsert_confirmed(story, fact)
+        saved = self.memory_service.confirm_fact(story, fact, self.longform_manager.fact_ledger)
         story.touch()
         self.save_state()
         return saved
@@ -215,7 +218,7 @@ class NovelForgeEngine:
     def delete_character_fact(self, fact_id: str) -> bool:
         """删除一条用户确认事实；系统提取事实不可直接删除。"""
         story = self._require_story()
-        deleted = self.longform_manager.fact_ledger.delete_confirmed(story, fact_id)
+        deleted = self.memory_service.remove_confirmed_fact(story, fact_id, self.longform_manager.fact_ledger)
         if deleted:
             story.touch()
             self.save_state()
@@ -399,17 +402,14 @@ class NovelForgeEngine:
             review_report=review,
             validation_report=validation,
         )
-        story.revision_proposals.append(proposal)
+        self.quality_service.add_proposal(story, proposal)
         story.touch()
         self.save_state()
         return proposal
 
     def get_revision_proposal(self, proposal_id: str) -> RevisionProposal | None:
         """查找当前故事中的修订候选。"""
-        for proposal in self._require_story().revision_proposals:
-            if proposal.id == proposal_id:
-                return proposal
-        return None
+        return self.quality_service.get_proposal(self._require_story(), proposal_id)
 
     def accept_revision_proposal(self, proposal_id: str) -> Chapter:
         """用户批准候选后，将其应用到仍处于源版本的正式章节。"""
@@ -684,7 +684,7 @@ class NovelForgeEngine:
                         message=str(exc),
                     )
                 )
-        story.batch_reports.append(report)
+        self.agent_run_service.add_batch_report(story, report)
         story.touch()
         self.save_state()
         return report
@@ -714,7 +714,7 @@ class NovelForgeEngine:
             end_chapter=end_chapter,
             use_auto_revision=use_auto_revision,
         )
-        story.agent_runs.append(run)
+        self.agent_run_service.add_autonomous_run(story, run)
         run.status = "running"
         run.updated_at = utc_now()
         story.touch()
@@ -798,7 +798,7 @@ class NovelForgeEngine:
             tool_registry=registry,
             task_evaluator=self.task_evaluator,
         )
-        story.agent_trace_runs.append(run)
+        self.agent_run_service.add_director_run(story, run)
         story.touch()
         self.save_state()
         return run
@@ -866,14 +866,11 @@ class NovelForgeEngine:
 
     def list_director_runs(self) -> list[AgentTraceRun]:
         """列出当前故事的所有导演智能体运行记录。"""
-        return list(self._require_story().agent_trace_runs)
+        return list(self._require_story().agent_runs.director)
 
     def get_director_run(self, run_id: str) -> AgentTraceRun | None:
         """根据 run_id 获取单次导演智能体运行记录，不存在时返回 None。"""
-        for run in self._require_story().agent_trace_runs:
-            if run.id == run_id:
-                return run
-        return None
+        return self.agent_run_service.get_director_run(self._require_story(), run_id)
 
     def export_director_trace_json(self, run_id: str, output_path: str | Path | None = None) -> Path:
         """导出指定导演运行记录的轨迹 JSON 文件。"""

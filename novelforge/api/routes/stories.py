@@ -18,6 +18,7 @@ from novelforge.api.schemas import (
     StatusResponse,
     StoryResponse,
     RevisionProposalFeedbackRequest,
+    story_api_payload,
 )
 from novelforge.api.state import AUTO_REVISION_JOBS, ENGINES, get_engine
 from novelforge.orchestrator.engine import NovelForgeEngine
@@ -59,14 +60,14 @@ def create_story(payload: CreateStoryRequest) -> StoryResponse:
         style_guide=payload.style_guide,
     )
     ENGINES[str(story.id)] = engine
-    return StoryResponse(story=story)
+    return StoryResponse(story=story_api_payload(story))
 
 
 @router.get("/{story_id}/", response_model=StoryResponse)
 def get_story(story_id: str) -> StoryResponse:
     """GET /stories/{story_id}/ — 获取指定故事的完整信息。"""
     engine = get_engine(story_id)
-    return StoryResponse(story=engine.story)
+    return StoryResponse(story=story_api_payload(engine.story))
 
 
 @router.get("/{story_id}/storage")

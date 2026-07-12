@@ -2,7 +2,15 @@
 
 ## Data ownership
 
-`novelforge/storage/novelforge.db` is the sole canonical source for a story. It contains the complete transactional Story document, including chapters, versions, contracts, facts, Director runs, plans, questions, evaluations, and revision proposals.
+`novelforge/storage/novelforge.db` is the sole canonical source for a story. Its Story document is explicitly grouped by domain:
+
+```text
+Story
+├── content     # characters, world, outlines, contracts, chapters, versions
+├── memory      # facts, states, foreshadowings, causal events, summaries, cards
+├── quality     # reviews, continuity diagnostics, proposals
+└── agent_runs  # Director plans/tasks/traces and autonomous/batch runs
+```
 
 The following are derived data and must never be used to recover or overwrite canonical state:
 
@@ -23,7 +31,8 @@ API / Workspace / CLI
 ```
 
 - Agents produce decisions, plans, reports, and candidate text. They do not write files or databases directly.
-- ToolRegistry validates arguments and invokes Engine methods; it does not persist domain state itself.
+- ToolRegistry validates arguments and invokes Engine use cases; it does not persist domain state itself.
+- `ContentService`, `MemoryService`, `QualityService`, and `AgentRunService` own mutations in their respective Story domains.
 - Engine methods are the application write boundary. A state change ends with `save_state()`, which writes one canonical SQLite transaction.
 - Indexes are disposable. Use `POST /stories/{story_id}/indexes/rebuild` to recreate them from SQLite.
 

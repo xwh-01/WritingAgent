@@ -62,7 +62,7 @@ def test_update_chapter_content_endpoint() -> None:
 
     assert updated.status_code == 200
     assert updated.json()["chapter"]["content"] == "王绍康站在球门前。"
-    assert story["chapters"]["1"]["title"] == "第一章"
+    assert story["content"]["chapters"]["1"]["title"] == "第一章"
     assert validation.status_code == 200
     assert "checks" in validation.json()
     assert "review_required" in validation.json()

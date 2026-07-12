@@ -31,6 +31,7 @@
 
 ```text
 novelforge/
+  application/     四个领域的应用服务：content、memory、quality、agent_runs
   agents/          Agent 实现：规划、写作、审查、修订、Director、记忆抽取、连续性审查
   api/             FastAPI 路由和请求响应模型
   cli.py           交互式命令行入口

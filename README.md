@@ -7,6 +7,8 @@ It explains the reading order, directory responsibilities, core workflow, and in
 
 For data ownership, write boundaries, derived-index rebuilding, and legacy migration, read `docs/STORAGE_MODEL.md`.
 
+The persisted Story model is grouped as `content`, `memory`, `quality`, and `agent_runs`; the API returns this explicit domain structure.
+
 ## Project Positioning
 
 NovelForge is a vertical Agentic Workflow / Agent Engineering project for long-form fiction writing. It focuses on one bounded domain: planning, drafting, reviewing, revising, and remembering a serialized novel.

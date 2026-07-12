@@ -104,10 +104,41 @@ async function createStory(event) {
 async function loadStory(storyId) {
     setStatus("Loading story");
     const payload = await getJson(`/stories/${storyId}/`);
-    state.story = payload.story;
+    state.story = normalizeStory(payload.story);
     state.activeChapter = pickActiveChapter();
     renderWorkspace();
     setStatus("Ready");
+}
+
+function normalizeStory(story) {
+    // API storage is domain-nested; these read-only aliases keep existing workspace renderers concise.
+    const content = story.content || {};
+    const memory = story.memory || {};
+    const quality = story.quality || {};
+    const runs = story.agent_runs || {};
+    return {
+        ...story,
+        characters: content.characters || {},
+        world_settings: content.world_settings || [],
+        outlines: content.outlines || [],
+        chapter_contracts: content.chapter_contracts || {},
+        chapters: content.chapters || {},
+        character_facts: memory.facts || [],
+        character_states: memory.states || {},
+        foreshadowings: memory.foreshadowings || [],
+        causal_events: memory.causal_events || [],
+        chapter_summaries: memory.chapter_summaries || {},
+        volume_summaries: memory.volume_summaries || [],
+        arc_summaries: memory.arc_summaries || [],
+        story_bible: memory.story_bible || {},
+        memory_cards: memory.cards || [],
+        auto_revision_reports: quality.auto_revision_reports || {},
+        continuity_reports: quality.continuity_reports || {},
+        character_continuity_reports: quality.character_continuity_reports || [],
+        revision_proposals: quality.revision_proposals || [],
+        agent_trace_runs: runs.director || [],
+        batch_reports: runs.batch_reports || [],
+    };
 }
 
 function pickActiveChapter() {

@@ -129,7 +129,30 @@ class NetworkXGraphStore(IGraphStore):
             return
         data = json.loads(self.path.read_text(encoding="utf-8"))
         if nx is None:
-            self.graph = data
+            # A graph may have been persisted on a machine with NetworkX
+            # installed.  Its node-link format uses a list of node records,
+            # whereas the lightweight fallback uses a mapping.  Normalize it
+            # here so an optional dependency never makes chapter writing fail.
+            if not isinstance(data, dict):
+                data = {}
+            raw_nodes = data.get("nodes", {})
+            if isinstance(raw_nodes, list):
+                node_key = data.get("name", "id")
+                nodes = {
+                    str(item.get(node_key, item.get("id", ""))): {
+                        key: value
+                        for key, value in item.items()
+                        if key not in {node_key, "id"}
+                    }
+                    for item in raw_nodes
+                    if isinstance(item, dict) and item.get(node_key, item.get("id")) is not None
+                }
+            elif isinstance(raw_nodes, dict):
+                nodes = raw_nodes
+            else:
+                nodes = {}
+            raw_edges = data.get("edges", data.get("links", []))
+            self.graph = {"nodes": nodes, "edges": raw_edges if isinstance(raw_edges, list) else []}
             return
         try:
             self.graph = nx.node_link_graph(data, edges="edges")

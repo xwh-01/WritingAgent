@@ -37,7 +37,7 @@ def test_agentic_writing_run_executes_explainable_task_queue(test_config: AppCon
         "memory_checkpoint",
     }
     assert len(story.chapters) == 2
-    assert story.agent_runs[-1].id == run.id
+    assert story.agent_runs.autonomous[-1].id == run.id
     assert story.memory_cards
     assert all(task.status == "completed" for task in run.tasks)
     assert any(event.get("agent") == "SupervisorAgent" for event in events)

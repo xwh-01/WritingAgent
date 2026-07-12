@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -558,39 +558,170 @@ class MemoryCard(BaseModel):
     last_seen_chapter: int | None = None
 
 
+class StoryContent(BaseModel):
+    """Canonical creative material: source entities, plans, contracts, and chapter versions."""
+
+    characters: dict[str, Character] = Field(default_factory=dict)
+    world_settings: list[WorldSetting] = Field(default_factory=list)
+    outlines: list[ChapterOutline] = Field(default_factory=list)
+    chapter_contracts: dict[int, ChapterContract] = Field(default_factory=dict)
+    chapters: dict[int, Chapter] = Field(default_factory=dict)
+
+
+class StoryMemory(BaseModel):
+    """Long-form facts and recall material derived from approved story content."""
+
+    facts: list[CharacterFact] = Field(default_factory=list)
+    states: dict[str, list[CharacterState]] = Field(default_factory=dict)
+    foreshadowings: list[Foreshadowing] = Field(default_factory=list)
+    causal_events: list[CausalEvent] = Field(default_factory=list)
+    chapter_summaries: dict[int, ChapterSummary] = Field(default_factory=dict)
+    volume_summaries: list[VolumeSummary] = Field(default_factory=list)
+    arc_summaries: list[ArcSummary] = Field(default_factory=list)
+    story_bible: StoryBible = Field(default_factory=StoryBible)
+    cards: list[MemoryCard] = Field(default_factory=list)
+
+
+class StoryQuality(BaseModel):
+    """Reviews, continuity diagnostics, and approval-gated candidate changes."""
+
+    auto_revision_reports: dict[int, AutoRevisionReport] = Field(default_factory=dict)
+    continuity_reports: dict[int, ContinuityAuditReport] = Field(default_factory=dict)
+    character_continuity_reports: list[CharacterContinuityReport] = Field(default_factory=list)
+    revision_proposals: list[RevisionProposal] = Field(default_factory=list)
+
+
+class StoryAgentRuns(BaseModel):
+    """Persistent agent execution records, plans, tasks, questions, evaluations, and traces."""
+
+    autonomous: list[AutonomousRunReport] = Field(default_factory=list)
+    director: list[AgentTraceRun] = Field(default_factory=list)
+    batch_reports: list[BatchWriteReport] = Field(default_factory=list)
+
+
 class Story(BaseModel):
-    """小说的根聚合模型，包含所有章节、角色、世界观、伏笔、因果事件、记忆及报告等完整状态。"""
+    """Root aggregate with explicit content, memory, quality, and agent-run ownership boundaries."""
 
     id: UUID = Field(default_factory=uuid4)
     title: str
     premise: str
     genre: str = "novel"
     style_guide: str = ""
-    outlines: list[ChapterOutline] = Field(default_factory=list)
-    chapter_contracts: dict[int, ChapterContract] = Field(default_factory=dict)
-    chapters: dict[int, Chapter] = Field(default_factory=dict)
-    characters: dict[str, Character] = Field(default_factory=dict)
-    world_settings: list[WorldSetting] = Field(default_factory=list)
-    foreshadowings: list[Foreshadowing] = Field(default_factory=list)
-    causal_events: list[CausalEvent] = Field(default_factory=list)
-    character_states: dict[str, list[CharacterState]] = Field(default_factory=dict)
-    character_facts: list[CharacterFact] = Field(default_factory=list)
-    chapter_summaries: dict[int, ChapterSummary] = Field(default_factory=dict)
-    volume_summaries: list[VolumeSummary] = Field(default_factory=list)
-    arc_summaries: list[ArcSummary] = Field(default_factory=list)
-    story_bible: StoryBible = Field(default_factory=StoryBible)
-    memory_cards: list[MemoryCard] = Field(default_factory=list)
-    auto_revision_reports: dict[int, AutoRevisionReport] = Field(default_factory=dict)
-    continuity_reports: dict[int, ContinuityAuditReport] = Field(default_factory=dict)
-    character_continuity_reports: list[CharacterContinuityReport] = Field(default_factory=list)
-    batch_reports: list[BatchWriteReport] = Field(default_factory=list)
-    agent_runs: list[AutonomousRunReport] = Field(default_factory=list)
-    agent_trace_runs: list[AgentTraceRun] = Field(default_factory=list)
-    revision_proposals: list[RevisionProposal] = Field(default_factory=list)
+    content: StoryContent = Field(default_factory=StoryContent)
+    memory: StoryMemory = Field(default_factory=StoryMemory)
+    quality: StoryQuality = Field(default_factory=StoryQuality)
+    agent_runs: StoryAgentRuns = Field(default_factory=StoryAgentRuns)
     current_chapter: int = 0
     status: str = "planning"
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_flat_story_state(cls, value: Any) -> Any:
+        """Read old flat JSON documents while writing only the explicit four-domain structure."""
+        if not isinstance(value, dict) or all(key in value for key in ("content", "memory", "quality", "agent_runs")):
+            return value
+        data = dict(value)
+        content_fields = ("characters", "world_settings", "outlines", "chapter_contracts", "chapters")
+        memory_map = {
+            "character_facts": "facts", "character_states": "states", "foreshadowings": "foreshadowings",
+            "causal_events": "causal_events", "chapter_summaries": "chapter_summaries",
+            "volume_summaries": "volume_summaries", "arc_summaries": "arc_summaries",
+            "story_bible": "story_bible", "memory_cards": "cards",
+        }
+        quality_fields = ("auto_revision_reports", "continuity_reports", "character_continuity_reports", "revision_proposals")
+        old_autonomous = data.pop("agent_runs", [])
+        old_director = data.pop("agent_trace_runs", [])
+        old_batch = data.pop("batch_reports", [])
+        data["content"] = {name: data.pop(name) for name in content_fields if name in data}
+        data["memory"] = {target: data.pop(source) for source, target in memory_map.items() if source in data}
+        data["quality"] = {name: data.pop(name) for name in quality_fields if name in data}
+        data["agent_runs"] = {"autonomous": old_autonomous, "director": old_director, "batch_reports": old_batch}
+        return data
+
+    # Compatibility aliases keep the existing public API stable while internal callers migrate
+    # to story.content / story.memory / story.quality / story.agent_runs.
+    @property
+    def outlines(self) -> list[ChapterOutline]: return self.content.outlines
+    @outlines.setter
+    def outlines(self, value: list[ChapterOutline]) -> None: self.content.outlines = value
+    @property
+    def chapter_contracts(self) -> dict[int, ChapterContract]: return self.content.chapter_contracts
+    @chapter_contracts.setter
+    def chapter_contracts(self, value: dict[int, ChapterContract]) -> None: self.content.chapter_contracts = value
+    @property
+    def chapters(self) -> dict[int, Chapter]: return self.content.chapters
+    @chapters.setter
+    def chapters(self, value: dict[int, Chapter]) -> None: self.content.chapters = value
+    @property
+    def characters(self) -> dict[str, Character]: return self.content.characters
+    @characters.setter
+    def characters(self, value: dict[str, Character]) -> None: self.content.characters = value
+    @property
+    def world_settings(self) -> list[WorldSetting]: return self.content.world_settings
+    @world_settings.setter
+    def world_settings(self, value: list[WorldSetting]) -> None: self.content.world_settings = value
+    @property
+    def character_facts(self) -> list[CharacterFact]: return self.memory.facts
+    @character_facts.setter
+    def character_facts(self, value: list[CharacterFact]) -> None: self.memory.facts = value
+    @property
+    def character_states(self) -> dict[str, list[CharacterState]]: return self.memory.states
+    @character_states.setter
+    def character_states(self, value: dict[str, list[CharacterState]]) -> None: self.memory.states = value
+    @property
+    def foreshadowings(self) -> list[Foreshadowing]: return self.memory.foreshadowings
+    @foreshadowings.setter
+    def foreshadowings(self, value: list[Foreshadowing]) -> None: self.memory.foreshadowings = value
+    @property
+    def causal_events(self) -> list[CausalEvent]: return self.memory.causal_events
+    @causal_events.setter
+    def causal_events(self, value: list[CausalEvent]) -> None: self.memory.causal_events = value
+    @property
+    def chapter_summaries(self) -> dict[int, ChapterSummary]: return self.memory.chapter_summaries
+    @chapter_summaries.setter
+    def chapter_summaries(self, value: dict[int, ChapterSummary]) -> None: self.memory.chapter_summaries = value
+    @property
+    def volume_summaries(self) -> list[VolumeSummary]: return self.memory.volume_summaries
+    @volume_summaries.setter
+    def volume_summaries(self, value: list[VolumeSummary]) -> None: self.memory.volume_summaries = value
+    @property
+    def arc_summaries(self) -> list[ArcSummary]: return self.memory.arc_summaries
+    @arc_summaries.setter
+    def arc_summaries(self, value: list[ArcSummary]) -> None: self.memory.arc_summaries = value
+    @property
+    def story_bible(self) -> StoryBible: return self.memory.story_bible
+    @story_bible.setter
+    def story_bible(self, value: StoryBible) -> None: self.memory.story_bible = value
+    @property
+    def memory_cards(self) -> list[MemoryCard]: return self.memory.cards
+    @memory_cards.setter
+    def memory_cards(self, value: list[MemoryCard]) -> None: self.memory.cards = value
+    @property
+    def auto_revision_reports(self) -> dict[int, AutoRevisionReport]: return self.quality.auto_revision_reports
+    @auto_revision_reports.setter
+    def auto_revision_reports(self, value: dict[int, AutoRevisionReport]) -> None: self.quality.auto_revision_reports = value
+    @property
+    def continuity_reports(self) -> dict[int, ContinuityAuditReport]: return self.quality.continuity_reports
+    @continuity_reports.setter
+    def continuity_reports(self, value: dict[int, ContinuityAuditReport]) -> None: self.quality.continuity_reports = value
+    @property
+    def character_continuity_reports(self) -> list[CharacterContinuityReport]: return self.quality.character_continuity_reports
+    @character_continuity_reports.setter
+    def character_continuity_reports(self, value: list[CharacterContinuityReport]) -> None: self.quality.character_continuity_reports = value
+    @property
+    def revision_proposals(self) -> list[RevisionProposal]: return self.quality.revision_proposals
+    @revision_proposals.setter
+    def revision_proposals(self, value: list[RevisionProposal]) -> None: self.quality.revision_proposals = value
+    @property
+    def batch_reports(self) -> list[BatchWriteReport]: return self.agent_runs.batch_reports
+    @batch_reports.setter
+    def batch_reports(self, value: list[BatchWriteReport]) -> None: self.agent_runs.batch_reports = value
+    @property
+    def agent_trace_runs(self) -> list[AgentTraceRun]: return self.agent_runs.director
+    @agent_trace_runs.setter
+    def agent_trace_runs(self, value: list[AgentTraceRun]) -> None: self.agent_runs.director = value
 
     def get_outline(self, chapter_index: int) -> ChapterOutline:
         """根据章节序号查找对应的大纲，找不到时抛出 KeyError。"""
