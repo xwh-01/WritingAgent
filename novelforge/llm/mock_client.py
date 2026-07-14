@@ -15,6 +15,11 @@ class MockLLMClient(LLMClient):
     def chat_completion(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         """根据提示词中的关键词返回对应的预设 JSON 或文本响应。"""
         prompt = "\n".join(message.get("content", "") for message in messages)
+        last_user = messages[-1].get("content", "") if messages else ""
+        # Route generation commands by the current user message before inspecting
+        # recalled context, which may legitimately contain old marker strings.
+        if last_user.startswith("generate_beats"):
+            return self._mock_scene_plan()
         if '"marker": "director_plan"' in prompt:
             try:
                 payload = json.loads(messages[-1].get("content", "{}"))
@@ -376,6 +381,35 @@ class MockLLMClient(LLMClient):
                 },
                 ensure_ascii=False,
             )
+        if "CURRENT_SCENE" in prompt and "PREVIOUS_SCENE_END_STATE" in prompt:
+            scene_match = re.search(r'"scene_index"\s*:\s*(\d+)', prompt)
+            scene_index = int(scene_match.group(1)) if scene_match else 1
+            return json.dumps(
+                {
+                    "content": (
+                        f"场景{scene_index}中，主角沿着潮湿的走廊逼近目标。阻碍突然出现，"
+                        "他没有退后，而是主动改变路线并承担暴露行踪的代价。门锁在身后合拢，"
+                        "新的线索已经落入手中，局面也因此发生了具体变化。"
+                    ),
+                    "ending_state": {
+                        "characters_present": ["主角"],
+                        "character_state_changes": {"主角": "已采取行动并承担后果"},
+                        "relationship_changes": [],
+                        "location_changes": {"主角": f"场景{scene_index}终点"},
+                        "time_changes": "",
+                        "knowledge_gained": {"主角": [f"线索{scene_index}"]},
+                        "items_gained": {},
+                        "items_lost": {},
+                        "injuries_or_conditions": {},
+                        "decisions": {"主角": "继续追查"},
+                        "promises": [],
+                        "questions_created": ["线索指向何处"],
+                        "questions_resolved": [],
+                        "ending_state": {"scene_completed": scene_index},
+                    },
+                },
+                ensure_ascii=False,
+            )
         if "prose_polish" in prompt:
             return (
                 "【润色稿】\n"
@@ -402,28 +436,68 @@ class MockLLMClient(LLMClient):
                 ensure_ascii=False,
             )
         if "generate_beats" in prompt:
-            return json.dumps(
-                [
-                    {
-                        "scene_index": 1,
-                        "description": "主角进入新环境，旧问题以新的形式出现。",
-                        "goal": "取得推进主线所需的关键线索。",
-                        "outcome": "线索到手，但暴露了更大的风险。",
-                    },
-                    {
-                        "scene_index": 2,
-                        "description": "主角与关键人物交锋，关系发生微妙变化。",
-                        "goal": "逼近真相并守住底线。",
-                        "outcome": "胜利带来代价，章节以悬念收束。",
-                    },
-                ],
-                ensure_ascii=False,
-            )
+            return self._mock_scene_plan()
         return (
             "夜幕降临时，雾气从低洼处漫上来。\n\n"
             "主角握紧手中的线索，意识到真正的对手并不在明处。每一步推进都像踩在薄冰上，"
             "但退后意味着让在乎的人陷入更大的危险。\n\n"
             "当远处的钟声响起，他终于做出选择：去见那个最不该相信的人。"
+        )
+
+    @staticmethod
+    def _mock_scene_plan() -> str:
+        return json.dumps(
+            [
+                {
+                    "scene_index": 1,
+                    "title": "进入压力场",
+                    "purpose": "建立本章目标并迫使主角行动",
+                    "pov_character": "主角",
+                    "location": "入口",
+                    "time_context": "当晚",
+                    "participating_characters": ["主角"],
+                    "character_goals": {"主角": "取得关键线索"},
+                    "conflict": "目标受到守卫阻拦",
+                    "obstacle": "入口被封锁",
+                    "must_happen": ["主角主动选择潜入"],
+                    "must_not_happen": [],
+                    "information_revealed": ["线索藏在内部"],
+                    "start_state": {},
+                    "end_state": {"location_changes": {"主角": "内部"}},
+                    "transition_to_next": "主角带着线索接触关键人物",
+                    "target_length": 900,
+                    "description": "主角进入新环境，旧问题以新的形式出现。",
+                    "goal": "取得推进主线所需的关键线索。",
+                    "outcome": "线索到手，但暴露了更大的风险。",
+                    "content": "",
+                    "status": "planned",
+                },
+                {
+                    "scene_index": 2,
+                    "title": "代价与钩子",
+                    "purpose": "让胜利产生代价并完成结尾钩子",
+                    "pov_character": "主角",
+                    "location": "会面处",
+                    "time_context": "稍后",
+                    "participating_characters": ["主角", "关键人物"],
+                    "character_goals": {"主角": "验证线索", "关键人物": "守住秘密"},
+                    "conflict": "双方目标互不相容",
+                    "obstacle": "关键人物拒绝合作",
+                    "must_happen": ["胜利带来代价"],
+                    "must_not_happen": [],
+                    "information_revealed": ["危险仍在扩大"],
+                    "start_state": {},
+                    "end_state": {"hook": "新的危险浮现"},
+                    "transition_to_next": "",
+                    "target_length": 900,
+                    "description": "主角与关键人物交锋，关系发生微妙变化。",
+                    "goal": "逼近真相并守住底线。",
+                    "outcome": "胜利带来代价，章节以悬念收束。",
+                    "content": "",
+                    "status": "planned",
+                },
+            ],
+            ensure_ascii=False,
         )
 
     def _extract_int(self, text: str, default: int) -> int:

@@ -36,25 +36,67 @@ class PlannerAgent(BaseAgent):
                 for i in range(1, num_chapters + 1)
             ]
 
-    def generate_beats(self, chapter_outline: ChapterOutline, context: str = "") -> list[Beat]:
-        """为给定章节大纲生成 3-5 个场景节拍，失败时返回默认节拍。"""
+    def generate_beats(
+        self,
+        chapter_outline: ChapterOutline,
+        context: str = "",
+        *,
+        story: Story | None = None,
+        contract: ChapterContract | None = None,
+        previous_chapter_summary: str = "",
+        character_states: dict | None = None,
+        style_requirements: str = "",
+        target_length: int = 1800,
+    ) -> list[Beat]:
+        """Generate the complete ordered, structured scene plan for one chapter."""
         system = (
-            "你是小说分场设计师。请严格输出 JSON 数组，每个元素符合 Beat: "
-            "{scene_index:int,description:str,goal:str,outcome:str}。"
+            "你是小说分场设计师。严格输出一个 JSON 数组，不要输出解释或 Markdown。"
+            "每个元素必须是完整场景对象，字段包括 scene_index,title,purpose,pov_character,"
+            "location,time_context,participating_characters,character_goals,conflict,obstacle,"
+            "must_happen,must_not_happen,information_revealed,start_state,end_state,"
+            "transition_to_next,target_length,description,goal,outcome,content,status。"
+            "content 必须为空字符串，status 必须为 planned。场景编号从 1 连续递增。"
+            "所有场景共同完成章节目标；每场都有不同的独立功能、人物目标、实际阻碍和结果；"
+            "相邻场景功能不得相同；前场 end_state 必须支持后场 start_state；"
+            "最后一场必须兑现章节 ending_hook；target_length 总和应接近章节目标字数。"
         )
+        premise = story.premise if story else ""
         user = (
-            "generate_beats: 为以下章节大纲生成 3 到 5 个场景节拍。\n"
+            "generate_beats\n"
+            f"故事前提: {premise}\n"
+            f"章节目标字数: {target_length}\n"
             f"章节大纲: {chapter_outline.model_dump_json()}\n"
-            f"上下文: {context[:3000]}\n只输出 JSON。"
+            f"ChapterContract: {contract.model_dump_json() if contract else '{}'}\n"
+            f"上一章摘要: {previous_chapter_summary}\n"
+            f"相关人物状态: {character_states or {}}\n"
+            f"文风要求: {style_requirements}\n"
+            f"补充上下文: {context[:3000]}\n"
+            "只输出 JSON 数组。"
         )
-        try:
-            return self._parse_model_list(self._chat(system, user), Beat)
-        except Exception:
-            return [
-                Beat(scene_index=1, description="开场展示压力与目标。", goal="明确主角要解决的问题。", outcome="主角被迫行动。"),
-                Beat(scene_index=2, description="中段遭遇阻碍与选择。", goal="推动冲突升级。", outcome="获得线索但付出代价。"),
-                Beat(scene_index=3, description="结尾形成转折或悬念。", goal="完成本章推进。", outcome="新的危险浮现。"),
-            ]
+        beats = self._parse_model_list(self._chat(system, user), Beat)
+        if not beats:
+            raise ValueError("Planner returned an empty scene plan.")
+        beats.sort(key=lambda item: item.scene_index)
+        expected = list(range(1, len(beats) + 1))
+        if [item.scene_index for item in beats] != expected:
+            raise ValueError("Scene indexes must be unique and contiguous from 1.")
+        for beat in beats:
+            if not (beat.purpose or beat.goal) or not beat.character_goals or not beat.obstacle or not beat.outcome:
+                raise ValueError(f"Scene {beat.scene_index} lacks purpose, character goals, obstacle, or outcome.")
+            if beat.target_length <= 0:
+                raise ValueError(f"Scene {beat.scene_index} must have a positive target_length.")
+            beat.content = ""
+            beat.status = "planned"
+        purposes = [(item.purpose or item.goal).strip() for item in beats]
+        if any(left == right for left, right in zip(purposes, purposes[1:])):
+            raise ValueError("Adjacent scenes cannot have the same purpose.")
+        planned_length = sum(item.target_length for item in beats)
+        tolerance = max(200, int(target_length * 0.25))
+        if abs(planned_length - target_length) > tolerance:
+            raise ValueError(
+                f"Scene target lengths total {planned_length}, too far from chapter target {target_length}."
+            )
+        return beats
 
     def generate_chapter_contract(self, story: Story, chapter_outline: ChapterOutline) -> ChapterContract:
         """把章节大纲扩展成可编辑、可验收的章节执行合同。"""

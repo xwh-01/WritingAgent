@@ -48,13 +48,57 @@ class ChapterOutline(BaseModel):
     pov_character: str | None = None
 
 
-class Beat(BaseModel):
-    """场景节拍，定义一个场景的目标与结果。"""
+class SceneEndState(BaseModel):
+    """A structured, serializable hand-off from one generated scene to the next."""
 
-    scene_index: int
-    description: str
-    goal: str
-    outcome: str
+    characters_present: list[str] = Field(default_factory=list)
+    character_state_changes: dict[str, str] = Field(default_factory=dict)
+    relationship_changes: list[str] = Field(default_factory=list)
+    location_changes: dict[str, str] = Field(default_factory=dict)
+    time_changes: str = ""
+    knowledge_gained: dict[str, list[str]] = Field(default_factory=dict)
+    items_gained: dict[str, list[str]] = Field(default_factory=dict)
+    items_lost: dict[str, list[str]] = Field(default_factory=dict)
+    injuries_or_conditions: dict[str, str] = Field(default_factory=dict)
+    decisions: dict[str, str] = Field(default_factory=dict)
+    promises: list[str] = Field(default_factory=list)
+    questions_created: list[str] = Field(default_factory=list)
+    questions_resolved: list[str] = Field(default_factory=list)
+    ending_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class SceneDraft(BaseModel):
+    """Writer output with an explicit boundary between prose and continuity data."""
+
+    content: str
+    ending_state: SceneEndState = Field(default_factory=SceneEndState)
+
+
+class Beat(BaseModel):
+    """The single canonical scene plan model, extended compatibly from legacy beats."""
+
+    scene_index: int = 0
+    description: str = ""
+    goal: str = ""
+    outcome: str = ""
+    title: str = ""
+    purpose: str = ""
+    pov_character: str = ""
+    location: str = ""
+    time_context: str = ""
+    participating_characters: list[str] = Field(default_factory=list)
+    character_goals: dict[str, str] = Field(default_factory=dict)
+    conflict: str = ""
+    obstacle: str = ""
+    must_happen: list[str] = Field(default_factory=list)
+    must_not_happen: list[str] = Field(default_factory=list)
+    information_revealed: list[str] = Field(default_factory=list)
+    start_state: dict[str, Any] = Field(default_factory=dict)
+    end_state: dict[str, Any] = Field(default_factory=dict)
+    transition_to_next: str = ""
+    target_length: int = 0
+    content: str = ""
+    status: str = "planned"
 
 
 class ChapterContract(BaseModel):

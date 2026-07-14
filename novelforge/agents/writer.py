@@ -5,13 +5,68 @@ from __future__ import annotations
 import json
 
 from novelforge.agents.base import BaseAgent
-from novelforge.core.models import Beat, ChapterContract, ChapterOutline
+from novelforge.core.models import Beat, ChapterContract, ChapterOutline, SceneDraft, SceneEndState
 
 
 class WriterAgent(BaseAgent):
     """写作 Agent，负责撰写可直接发布的小说章节正文。"""
 
     name = "writer"
+
+    def write_scene(
+        self,
+        *,
+        story_premise: str,
+        contract: ChapterContract,
+        scene: Beat,
+        previous_scene_end_state: SceneEndState | None,
+        character_states: dict,
+        style_requirements: str,
+        forbidden_actions: list[str],
+        transition_constraints: list[str] | None = None,
+    ) -> SceneDraft:
+        """Write one scene and return prose plus its structured continuity hand-off."""
+        system = (
+            self._build_writer_system_prompt(style_requirements)
+            + "\n你当前只写一个场景。严格输出 JSON 对象，顶层仅含 content 和 ending_state。"
+            "content 是小说正文；ending_state 是结构化对象，必须包含 characters_present,"
+            "character_state_changes,relationship_changes,location_changes,time_changes,"
+            "knowledge_gained,items_gained,items_lost,injuries_or_conditions,decisions,promises,"
+            "questions_created,questions_resolved,ending_state。不得使用字符串切割边界。"
+        )
+        requirements = [
+            "人物有明确目标并遭遇实际阻碍",
+            "人物主动选择且选择产生具体结果",
+            "结尾必须发生可传递的状态变化",
+            "对话只用于冲突、信息推进或人物塑造，并穿插动作",
+            "通过动作、环境和对话呈现剧情，不把计划扩写成总结",
+            "不重复已知信息，不越过人物知识边界，不新增重大长期设定",
+            "不使用模板化结尾",
+        ]
+        user = "\n\n".join(
+            [
+                f"STORY_PREMISE\n{story_premise}",
+                f"CHAPTER_CONTRACT\n{json.dumps(contract.model_dump(), ensure_ascii=False)}",
+                f"CURRENT_SCENE\n{json.dumps(scene.model_dump(exclude={'content', 'status'}), ensure_ascii=False)}",
+                "PREVIOUS_SCENE_END_STATE\n"
+                + json.dumps(
+                    previous_scene_end_state.model_dump() if previous_scene_end_state else {},
+                    ensure_ascii=False,
+                ),
+                f"CHARACTER_STATES\n{json.dumps(character_states, ensure_ascii=False, default=str)}",
+                f"STYLE_REQUIREMENTS\n{style_requirements}",
+                "FORBIDDEN_ACTIONS\n"
+                + json.dumps(forbidden_actions + (transition_constraints or []), ensure_ascii=False),
+                "OUTPUT_REQUIREMENTS\n"
+                + "\n".join(f"{index}. {item}" for index, item in enumerate(requirements, 1))
+                + f"\n目标长度约 {scene.target_length or 600} 字。只输出合法 JSON。",
+            ]
+        )
+        draft = self._parse_model(self._chat(system, user), SceneDraft)
+        if not draft.content.strip():
+            raise ValueError("Writer returned empty scene content.")
+        draft.content = draft.content.strip()
+        return draft
 
     def write_chapter(
         self,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Callable
@@ -30,6 +31,7 @@ from novelforge.core.models import (
     AutonomousRunReport,
     BatchChapterResult,
     BatchWriteReport,
+    Beat,
     Chapter,
     ChapterContract,
     CharacterFact,
@@ -38,6 +40,7 @@ from novelforge.core.models import (
     ContinuityAuditReport,
     ReviewReport,
     RevisionProposal,
+    SceneEndState,
     Story,
     utc_now,
 )
@@ -145,9 +148,9 @@ class NovelForgeEngine:
         """为指定章节生成场景节拍（scene beats），装配写作上下文后调用 Planner 代理。"""
         story = self._require_story()
         outline = story.get_outline(chapter_index)
-        self.ensure_chapter_contract(chapter_index)
+        contract = self.ensure_chapter_contract(chapter_index)
         context = self.context_assembler.assemble_writing_context(chapter_index, story)
-        beats = self.planner.generate_beats(outline, context)
+        beats = self._plan_chapter_scenes(story, outline, contract, context)
         chapter = story.content.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
         chapter.beats = beats
         self.content_service.save_chapter(story, chapter)
@@ -157,25 +160,230 @@ class NovelForgeEngine:
         return chapter
 
     def write_chapter(self, chapter_index: int) -> Chapter:
-        """撰写指定章节的草稿。若尚未生成节拍则先调用 generate_beats，然后调用 Writer 代理写作，必要时润色。"""
+        """Atomically plan, write, validate, merge, and persist a chapter scene by scene."""
         story = self._require_story()
         outline = story.get_outline(chapter_index)
-        chapter = story.content.chapters.get(chapter_index)
-        if chapter is None or not chapter.beats:
-            chapter = self.generate_beats(chapter_index)
         context = self.context_assembler.assemble_writing_context(chapter_index, story)
         contract = self.ensure_chapter_contract(chapter_index)
-        content = self.writer.write_chapter(
-            chapter_index, outline, chapter.beats, context, story.style_guide, contract=contract
-        )
-        content = self._polish_draft_if_enabled(story, chapter_index, content)
-        chapter.update_content(content, status="draft", summary=outline.summary)
-        self.content_service.save_chapter(story, chapter)
+        chapter = self._compose_chapter_by_scenes(story, outline, contract, context)
+        self._commit_generated_chapter(story, chapter, outline.summary)
         story.status = WorkflowState.CHAPTER_DRAFT.value
         self._process_chapter_memory(story, chapter)
         story.touch()
         self.save_state()
         return chapter
+
+    def _plan_chapter_scenes(
+        self,
+        story: Story,
+        outline: ChapterOutline,
+        contract: ChapterContract,
+        context: str,
+    ) -> list[Beat]:
+        previous = story.memory.chapter_summaries.get(outline.chapter_index - 1)
+        previous_summary = ""
+        if previous is not None:
+            previous_summary = (
+                getattr(previous, "chapter_summary", "")
+                or getattr(previous, "summary", "")
+                or str(previous)
+            )
+        states = {
+            character_id: [item.model_dump() for item in history if item.chapter < outline.chapter_index]
+            for character_id, history in story.memory.states.items()
+        }
+        try:
+            return self.planner.generate_beats(
+                outline,
+                context,
+                story=story,
+                contract=contract,
+                previous_chapter_summary=previous_summary,
+                character_states=states,
+                style_requirements=story.style_guide,
+                target_length=self.config.story.prose_target_words,
+            )
+        except Exception as exc:
+            raise WorkflowError(f"Scene planning failed for chapter {outline.chapter_index}: {exc}") from exc
+
+    def _compose_chapter_by_scenes(
+        self,
+        story: Story,
+        outline: ChapterOutline,
+        contract: ChapterContract,
+        context: str,
+    ) -> Chapter:
+        existing = story.content.chapters.get(outline.chapter_index)
+        candidate = (
+            existing.model_copy(deep=True)
+            if existing is not None
+            else Chapter(index=outline.chapter_index, title=outline.title)
+        )
+        if not candidate.beats or any(not self._is_structured_scene(item) for item in candidate.beats):
+            candidate.beats = self._plan_chapter_scenes(story, outline, contract, context)
+        else:
+            candidate.beats = [item.model_copy(deep=True) for item in candidate.beats]
+
+        previous_end: SceneEndState | None = None
+        forbidden = list(contract.must_not_happen) + [
+            "他不知道的是",
+            "真正的挑战才刚刚开始",
+            "一切都将发生改变",
+            "大量空泛心理描写",
+            "人物直接解释双方都知道的信息",
+            "同一个意思连续重复",
+            "只有对话没有动作",
+            "只有描写没有剧情推进",
+        ]
+        for scene in sorted(candidate.beats, key=lambda item: item.scene_index):
+            try:
+                constraints = self._validate_scene_transition(previous_end, scene)
+                character_states = self._scene_character_states(story, scene, outline.chapter_index)
+                draft = self.writer.write_scene(
+                    story_premise=story.premise,
+                    contract=contract,
+                    scene=scene,
+                    previous_scene_end_state=previous_end,
+                    character_states=character_states,
+                    style_requirements=story.style_guide,
+                    forbidden_actions=forbidden,
+                    transition_constraints=constraints,
+                )
+                scene.content = self._polish_draft_if_enabled(
+                    story, outline.chapter_index, draft.content
+                )
+                scene.end_state = draft.ending_state.model_dump()
+                scene.status = "completed"
+                previous_end = draft.ending_state
+            except Exception as exc:
+                raise WorkflowError(f"Scene {scene.scene_index} generation failed: {exc}") from exc
+
+        candidate.content = self._merge_scenes(candidate.beats)
+        candidate.status = "draft"
+        candidate.summary = outline.summary
+        return candidate
+
+    @staticmethod
+    def _is_structured_scene(scene: Beat) -> bool:
+        return bool((scene.purpose or scene.goal) and scene.character_goals and scene.obstacle and scene.outcome)
+
+    @staticmethod
+    def _scene_character_states(story: Story, scene: Beat, chapter_index: int) -> dict:
+        names = set(scene.participating_characters)
+        if scene.pov_character:
+            names.add(scene.pov_character)
+        result: dict[str, object] = {}
+        for character_id, history in story.memory.states.items():
+            character = story.content.characters.get(character_id)
+            if names and character_id not in names and (character is None or character.name not in names):
+                continue
+            visible = [state for state in history if state.chapter < chapter_index]
+            if visible:
+                result[character_id] = visible[-1].model_dump()
+        return result
+
+    @staticmethod
+    def _merge_scenes(scenes: list[Beat]) -> str:
+        ordered = sorted(scenes, key=lambda item: item.scene_index)
+        if any(not item.content.strip() for item in ordered):
+            raise WorkflowError("Cannot merge chapter because at least one scene has no content.")
+        return "\n\n***\n\n".join(item.content.strip() for item in ordered)
+
+    @staticmethod
+    def _commit_generated_chapter(story: Story, candidate: Chapter, summary: str) -> None:
+        existing = story.content.chapters.get(candidate.index)
+        if existing is None:
+            candidate.version = 2
+        else:
+            candidate.history = list(existing.history)
+            if existing.content:
+                candidate.history.append(existing.snapshot())
+            candidate.version = existing.version + 1
+        candidate.summary = summary
+        story.content.chapters[candidate.index] = candidate
+        story.current_chapter = candidate.index
+
+    def _validate_scene_transition(self, previous: SceneEndState | None, current: Beat) -> list[str]:
+        """Reject explicit hard contradictions and return softer carry-over constraints."""
+        if previous is None:
+            return []
+        start = current.start_state or {}
+        planned_locations = self._mapping_from_state(start, "location_changes", "character_locations", "locations")
+        for character, location in previous.location_changes.items():
+            planned = planned_locations.get(character)
+            if planned and planned != location:
+                raise WorkflowError(
+                    f"location conflict for {character}: previous scene ended at {location!r}, "
+                    f"scene {current.scene_index} starts at {planned!r}"
+                )
+
+        inventories = self._mapping_from_state(start, "items", "inventory", "items_gained")
+        for character, lost_items in previous.items_lost.items():
+            present = self._as_string_set(inventories.get(character, []))
+            repeated = present.intersection(self._as_string_set(lost_items))
+            if repeated:
+                raise WorkflowError(
+                    f"lost item conflict for {character}: {', '.join(sorted(repeated))} reappears in "
+                    f"scene {current.scene_index}"
+                )
+
+        required_knowledge = self._mapping_from_state(
+            start, "knowledge_from_previous_scene", "newly_acquired_knowledge"
+        )
+        for character, required in required_knowledge.items():
+            available = self._as_string_set(previous.knowledge_gained.get(character, []))
+            unexplained = self._as_string_set(required).difference(available)
+            if unexplained:
+                raise WorkflowError(
+                    f"knowledge conflict for {character}: {', '.join(sorted(unexplained))} was not acquired "
+                    f"before scene {current.scene_index}"
+                )
+
+        planned_time = str(start.get("time_context") or start.get("time") or "")
+        if previous.time_changes and planned_time and self._time_is_earlier(planned_time, previous.time_changes):
+            raise WorkflowError(
+                f"time conflict: previous scene ended at {previous.time_changes!r}, "
+                f"scene {current.scene_index} starts at {planned_time!r}"
+            )
+
+        constraints: list[str] = []
+        if previous.decisions:
+            constraints.append("承接上一场景决定: " + json.dumps(previous.decisions, ensure_ascii=False))
+        if previous.promises:
+            constraints.append("不得遗忘上一场景承诺: " + "；".join(previous.promises))
+        if previous.knowledge_gained:
+            constraints.append("人物知识边界已增加: " + json.dumps(previous.knowledge_gained, ensure_ascii=False))
+        if previous.items_lost:
+            constraints.append("已丢失物品不得无解释出现: " + json.dumps(previous.items_lost, ensure_ascii=False))
+        return constraints
+
+    @staticmethod
+    def _mapping_from_state(state: dict, *keys: str) -> dict:
+        for key in keys:
+            value = state.get(key)
+            if isinstance(value, dict):
+                return value
+        return {}
+
+    @staticmethod
+    def _as_string_set(value: object) -> set[str]:
+        if isinstance(value, str):
+            return {value}
+        if isinstance(value, (list, tuple, set)):
+            return {str(item) for item in value}
+        return set()
+
+    @staticmethod
+    def _time_is_earlier(current: str, previous: str) -> bool:
+        def parse(value: str) -> datetime | None:
+            normalized = value.strip().replace("Z", "+00:00")
+            try:
+                return datetime.fromisoformat(normalized)
+            except ValueError:
+                return None
+
+        current_dt, previous_dt = parse(current), parse(previous)
+        return bool(current_dt and previous_dt and current_dt < previous_dt)
 
     def ensure_chapter_contract(self, chapter_index: int, force: bool = False) -> ChapterContract:
         """返回章节合同；缺失时从大纲生成，force=True 时重新生成。"""
@@ -510,10 +718,15 @@ class NovelForgeEngine:
         """
         story = self._require_story()
         outline = story.get_outline(chapter_index)
-        self.ensure_chapter_contract(chapter_index)
-        chapter = story.content.chapters.get(chapter_index)
-        if chapter is None or not chapter.beats:
-            chapter = self.generate_beats(chapter_index)
+        contract = self.ensure_chapter_contract(chapter_index)
+        original_chapter = story.content.chapters.get(chapter_index)
+        chapter = original_chapter
+        generated_scene_draft = False
+        if chapter is None or not chapter.content:
+            context = self.context_assembler.assemble_writing_context(chapter_index, story)
+            chapter = self._compose_chapter_by_scenes(story, outline, contract, context)
+            story.content.chapters[chapter_index] = chapter
+            generated_scene_draft = True
 
         # Run continuity audit BEFORE the revision loop so findings can be fixed
         continuity_issues = []
@@ -544,7 +757,16 @@ class NovelForgeEngine:
             config=config,
         )
         self.auto_status = "running"
-        result = self.current_auto_revisor.run(chapter_index, continuity_issues=continuity_issues or None)
+        try:
+            result = self.current_auto_revisor.run(chapter_index, continuity_issues=continuity_issues or None)
+        except Exception:
+            if generated_scene_draft:
+                if original_chapter is None:
+                    story.content.chapters.pop(chapter_index, None)
+                else:
+                    story.content.chapters[chapter_index] = original_chapter
+            self.auto_status = "failed"
+            raise
 
         chapter = story.content.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
         chapter.update_content(
