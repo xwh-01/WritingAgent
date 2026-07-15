@@ -39,6 +39,7 @@ from novelforge.core.models import (
     ChapterOutline,
     ContinuityAuditReport,
     ReviewReport,
+    RevisionIssue,
     RevisionProposal,
     SceneEndState,
     Story,
@@ -510,6 +511,31 @@ class NovelForgeEngine:
         self.save_state()
         return report
 
+    def _audit_candidate_continuity(
+        self,
+        story: Story,
+        chapter_index: int,
+        candidate_content: str,
+    ) -> ContinuityAuditReport:
+        """Audit candidate text without mutating or persisting the official Story."""
+        outline = None
+        try:
+            outline = story.get_outline(chapter_index)
+        except KeyError:
+            outline = None
+        query = outline.summary if outline else candidate_content[:500]
+        longform_context = self.longform_manager.get_enhanced_context(
+            chapter_index,
+            story,
+            query=query,
+        )
+        return self.continuity_auditor.audit_chapter(
+            story,
+            chapter_index,
+            candidate_content,
+            longform_context,
+        )
+
     def audit_character_continuity(
         self,
         character_query: str,
@@ -719,28 +745,27 @@ class NovelForgeEngine:
         story = self._require_story()
         outline = story.get_outline(chapter_index)
         contract = self.ensure_chapter_contract(chapter_index)
-        original_chapter = story.content.chapters.get(chapter_index)
-        chapter = original_chapter
-        generated_scene_draft = False
-        if chapter is None or not chapter.content:
+        official_chapter = story.content.chapters.get(chapter_index)
+        had_official_content = bool(official_chapter and official_chapter.content)
+        original_chapter = official_chapter.model_copy(deep=True) if official_chapter is not None else None
+        candidate_chapter = official_chapter.model_copy(deep=True) if official_chapter is not None else None
+        if candidate_chapter is None or not candidate_chapter.content:
             context = self.context_assembler.assemble_writing_context(chapter_index, story)
-            chapter = self._compose_chapter_by_scenes(story, outline, contract, context)
-            story.content.chapters[chapter_index] = chapter
-            generated_scene_draft = True
+            candidate_chapter = self._compose_chapter_by_scenes(story, outline, contract, context)
 
-        # Run continuity audit BEFORE the revision loop so findings can be fixed
-        continuity_issues = []
-        if chapter.content:
-            try:
-                audit_report = self.audit_chapter_continuity(chapter_index)
-                continuity_issues = [
-                    {"dimension": issue.dimension, "severity": issue.severity,
-                     "description": issue.description, "evidence": issue.evidence,
-                     "suggestion": issue.suggestion}
-                    for issue in audit_report.issues
-                ]
-            except Exception:
-                pass  # continuity audit is advisory; failure doesn't block writing
+        initial_content = candidate_chapter.content
+
+        def check_continuity(index: int, content: str) -> list[RevisionIssue]:
+            report = self._audit_candidate_continuity(story, index, content)
+            return [
+                RevisionIssue(
+                    dimension=f"continuity:{issue.dimension}",
+                    severity=issue.severity,
+                    description=issue.description,
+                    evidence=issue.evidence,
+                )
+                for issue in report.issues
+            ]
 
         config = AutoRevisorConfig(
             max_rounds=self.config.auto_revisor.max_rounds,
@@ -755,29 +780,55 @@ class NovelForgeEngine:
             editor=self.editor,
             assembler=self.context_assembler,
             config=config,
+            continuity_checker=check_continuity,
         )
         self.auto_status = "running"
         try:
-            result = self.current_auto_revisor.run(chapter_index, continuity_issues=continuity_issues or None)
+            result = self.current_auto_revisor.run(
+                chapter_index,
+                initial_content=initial_content,
+            )
         except Exception:
-            if generated_scene_draft:
-                if original_chapter is None:
-                    story.content.chapters.pop(chapter_index, None)
-                else:
-                    story.content.chapters[chapter_index] = original_chapter
+            if original_chapter is None:
+                story.content.chapters.pop(chapter_index, None)
+            else:
+                story.content.chapters[chapter_index] = original_chapter
             self.auto_status = "failed"
             raise
 
-        chapter = story.content.chapters.get(chapter_index) or Chapter(index=chapter_index, title=outline.title)
-        chapter.update_content(
-            result.final_content,
-            status="revised" if result.passed else "reviewed",
-            summary=chapter.summary or outline.summary,
+        if original_chapter is None:
+            story.content.chapters.pop(chapter_index, None)
+        else:
+            story.content.chapters[chapter_index] = original_chapter
+
+        commit_allowed = (
+            result.passed is True
+            and result.final_score >= config.pass_threshold
+            and not any(
+                issue.severity in {"high", "critical"}
+                and issue.dimension.startswith("continuity")
+                for issue in result.residual_issues
+            )
         )
-        self.content_service.save_chapter(story, chapter)
+
+        if commit_allowed:
+            if not had_official_content:
+                chapter = candidate_chapter.model_copy(deep=True)
+                chapter.content = ""
+                if original_chapter is None:
+                    chapter.history = []
+            else:
+                chapter = original_chapter
+            chapter.update_content(
+                result.final_content,
+                status="revised",
+                summary=chapter.summary or outline.summary,
+            )
+            self.content_service.save_chapter(story, chapter)
         self.quality_service.save_auto_revision_report(story, chapter_index, result)
-        story.status = WorkflowState.CHAPTER_FINALIZED.value if result.passed else WorkflowState.REVISING.value
-        self._process_chapter_memory(story, chapter)
+        story.status = WorkflowState.CHAPTER_FINALIZED.value if commit_allowed else WorkflowState.REVISING.value
+        if commit_allowed:
+            self._process_chapter_memory(story, chapter)
         story.touch()
         self.save_state()
         self.auto_status = self.current_auto_revisor.status

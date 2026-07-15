@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 
 from fastapi.testclient import TestClient
+import pytest
 
 from novelforge.agents.continuity_auditor import ContinuityAuditorAgent
 from novelforge.api.main import app
 from novelforge.api.state import ENGINES
-from novelforge.core.models import ChapterOutline, Foreshadowing, Story
+from novelforge.core.models import Chapter, ChapterOutline, ContinuityAuditReport, Foreshadowing, Story
 from novelforge.llm.mock_client import MockLLMClient
 from novelforge.orchestrator.engine import NovelForgeEngine
 
@@ -40,6 +41,38 @@ def test_engine_records_continuity_report_after_writing(test_config) -> None:
     assert chapter.content
     assert 1 in story.quality.continuity_reports
     assert story.quality.continuity_reports[1].risk_score >= 0
+
+
+def test_candidate_continuity_audit_uses_candidate_without_persisting(test_config, monkeypatch) -> None:
+    engine = NovelForgeEngine(config=test_config)
+    story = engine.start_new_story("Premise", title="Candidate audit")
+    story.content.outlines = [
+        ChapterOutline(chapter_index=1, title="One", summary="Summary", conflict="Conflict")
+    ]
+    story.content.chapters[1] = Chapter(index=1, title="One", content="official content")
+    seen: dict[str, str] = {}
+    expected = ContinuityAuditReport(chapter_index=1, summary="candidate only")
+
+    monkeypatch.setattr(
+        engine.longform_manager,
+        "get_enhanced_context",
+        lambda *_args, **_kwargs: "longform context",
+    )
+
+    def audit(_story, _index, content, context):
+        seen["content"] = content
+        seen["context"] = context
+        return expected
+
+    monkeypatch.setattr(engine.continuity_auditor, "audit_chapter", audit)
+    monkeypatch.setattr(engine, "save_state", lambda: pytest.fail("candidate audit must not save"))
+
+    report = engine._audit_candidate_continuity(story, 1, "candidate content")
+
+    assert report is expected
+    assert seen == {"content": "candidate content", "context": "longform context"}
+    assert story.content.chapters[1].content == "official content"
+    assert story.quality.continuity_reports == {}
 
 
 def test_report_api_includes_continuity_report() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from novelforge.agents.critic import CriticAgent
 from novelforge.agents.editor import EditorAgent
@@ -40,6 +41,7 @@ class AutoRevisor:
         editor: EditorAgent,
         assembler: ContextAssembler,
         config: AutoRevisorConfig,
+        continuity_checker: Callable[[int, str], list[RevisionIssue]] | None = None,
     ) -> None:
         """初始化修订器，注入故事对象、写作/评审/编辑智能体和上下文装配器。"""
         self.story = story
@@ -48,6 +50,7 @@ class AutoRevisor:
         self.editor = editor
         self.assembler = assembler
         self.config = config
+        self.continuity_checker = continuity_checker
         self.stop_requested = False
         self.current_round = 0
         self.status = "idle"
@@ -56,13 +59,19 @@ class AutoRevisor:
         """设置停止标志，请求在下一次循环检查时中止修订。"""
         self.stop_requested = True
 
-    def run(self, chapter_index: int, continuity_issues: list | None = None) -> AutoRevisionReport:
+    def run(
+        self,
+        chapter_index: int,
+        continuity_issues: list | None = None,
+        initial_content: str | None = None,
+    ) -> AutoRevisionReport:
         """执行自动修订主循环：生成初稿、逐轮评审→修订，直至通过或达到最大轮次。
 
         Args:
             chapter_index: 章节编号。
-            continuity_issues: 可选的连续性审计问题列表（ContinuityIssue），
-                               将注入到每轮修订的 QualityReviewReport 中。
+            continuity_issues: 兼容旧调用的初始连续性问题，仅用于第一轮；
+                               配置动态 checker 后忽略该固定列表。
+            initial_content: 可选的候选初稿，不会先写入正式 Story。
         """
         import statistics
 
@@ -74,7 +83,7 @@ class AutoRevisor:
             chapter_index=chapter_index,
         )
         with trace_timer() as draft_timer:
-            current_content = self._initial_draft(chapter_index)
+            current_content = initial_content if initial_content is not None else self._initial_draft(chapter_index)
         result = AutoRevisionReport(chapter_index=chapter_index, final_content=current_content)
         recorder.record(
             stage="auto_revisor",
@@ -154,19 +163,14 @@ class AutoRevisor:
                         evidence=check.evidence,
                     ))
 
-            # Continuity is also a hard gate; inject it before deciding pass/fail.
-            if continuity_issues:
-                for ci in continuity_issues:
-                    severity = ci.get("severity", "medium") if isinstance(ci, dict) else getattr(ci, "severity", "medium")
-                    description = ci.get("description", "") if isinstance(ci, dict) else getattr(ci, "description", "")
-                    dimension = ci.get("dimension", "unknown") if isinstance(ci, dict) else getattr(ci, "dimension", "unknown")
-                    evidence = ci.get("evidence", "") if isinstance(ci, dict) else getattr(ci, "evidence", "")
-                    review.issues.append(RevIssue(
-                        dimension=f"continuity:{dimension}", severity=severity,
-                        description=description, evidence=evidence,
-                    ))
-                    if severity in {"high", "critical"}:
-                        review.hard_constraints_passed = False
+            continuity_review_issues = self._check_continuity(
+                chapter_index,
+                current_content,
+                fallback_issues=continuity_issues if round_num == 1 else None,
+            )
+            review.issues.extend(continuity_review_issues)
+            if any(issue.severity in {"high", "critical"} for issue in continuity_review_issues):
+                review.hard_constraints_passed = False
 
             passed_gate = total_score >= self.config.pass_threshold and review.hard_constraints_passed
 
@@ -250,23 +254,39 @@ class AutoRevisor:
                         description=check.message or check.requirement,
                         evidence=check.evidence,
                     ))
+            final_continuity_issues = self._check_continuity(
+                chapter_index,
+                current_content,
+            )
+            final_review.issues.extend(final_continuity_issues)
+            if any(issue.severity in {"high", "critical"} for issue in final_continuity_issues):
+                final_review.hard_constraints_passed = False
             result.final_content = current_content
             result.residual_issues = final_review.issues
+            result.passed = (
+                result.final_score >= self.config.pass_threshold
+                and final_review.hard_constraints_passed
+            )
             recorder.record(
                 stage="auto_revisor",
                 action="final_review",
                 input_summary=f"Final review for chapter {chapter_index}.",
-                output_summary=f"Final score={result.final_score:.2f}",
-                observation=f"Final score {result.final_score:.2f}; passed={result.final_score >= self.config.pass_threshold}.",
+                output_summary=(
+                    f"Final score={result.final_score:.2f}; "
+                    f"continuity_issues={len(final_continuity_issues)}"
+                ),
+                observation=f"Final score {result.final_score:.2f}; passed={result.passed}.",
                 memory_hits_count=int(getattr(self.assembler, "last_context_stats", {}).get("memory_hits_count", 0) or 0),
                 review_score_before=previous_score,
                 review_score_after=result.final_score,
-                success=result.final_score >= self.config.pass_threshold,
-                error_type="" if result.final_score >= self.config.pass_threshold else ERROR_QUALITY_GATE_FAILED,
-                error_message="" if result.final_score >= self.config.pass_threshold else "Final score below pass threshold.",
+                success=result.passed,
+                error_type="" if result.passed else ERROR_QUALITY_GATE_FAILED,
+                error_message="" if result.passed else (
+                    f"Final quality gate failed; hard_constraints_passed={final_review.hard_constraints_passed}."
+                ),
                 duration_ms=final_timer.duration_ms,
             )
-            if not result.residual_issues:
+            if not result.passed and not result.residual_issues:
                 result.residual_issues = [
                     RevisionIssue(
                         dimension="综合质量",
@@ -288,18 +308,49 @@ class AutoRevisor:
         if chapter and chapter.content:
             return chapter.content
         outline = self.story.get_outline(chapter_index)
-        if chapter is None or not chapter.beats:
+        if chapter is None:
             chapter = Chapter(index=chapter_index, title=outline.title)
-            self.story.content.chapters[chapter_index] = chapter
         context = self.assembler.assemble_writing_context(chapter_index, self.story)
         content = self.writer.write_chapter(
             chapter_index, outline, chapter.beats, context, self.story.style_guide,
             contract=self.story.content.chapter_contracts.get(chapter_index),
         )
-        chapter.content = content
-        chapter.summary = outline.summary
-        chapter.status = "draft"
         return content
+
+    def _check_continuity(
+        self,
+        chapter_index: int,
+        content: str,
+        fallback_issues: list | None = None,
+    ) -> list[RevisionIssue]:
+        """Audit this candidate without persisting diagnostics or story state."""
+        if self.continuity_checker is not None:
+            try:
+                return list(self.continuity_checker(chapter_index, content) or [])
+            except Exception as exc:
+                return [
+                    RevisionIssue(
+                        dimension="continuity_audit",
+                        severity="high",
+                        description=f"Continuity audit failed: {exc}",
+                    )
+                ]
+
+        converted: list[RevisionIssue] = []
+        for issue in fallback_issues or []:
+            severity = issue.get("severity", "medium") if isinstance(issue, dict) else getattr(issue, "severity", "medium")
+            description = issue.get("description", "") if isinstance(issue, dict) else getattr(issue, "description", "")
+            dimension = issue.get("dimension", "unknown") if isinstance(issue, dict) else getattr(issue, "dimension", "unknown")
+            evidence = issue.get("evidence", "") if isinstance(issue, dict) else getattr(issue, "evidence", "")
+            converted.append(
+                RevisionIssue(
+                    dimension=f"continuity:{dimension}",
+                    severity=severity,
+                    description=description,
+                    evidence=evidence,
+                )
+            )
+        return converted
 
     def _summarize_revision(self, before: str, after: str, review: QualityReviewReport) -> str:
         """生成本轮修订的摘要文本，说明涉及的问题维度和字数变化。"""
