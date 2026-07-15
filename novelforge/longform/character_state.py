@@ -6,8 +6,8 @@ import json
 import re
 from abc import ABC, abstractmethod
 
-from novelforge.core.models import Character, CharacterState, Story
-from novelforge.core.utils import extract_json, terms
+from novelforge.core.utils import extract_json
+from novelforge.domain import Character, CharacterState, Story
 from novelforge.llm.base import LLMClient
 
 
@@ -15,7 +15,9 @@ class ICharacterStateTracker(ABC):
     """角色状态跟踪器的抽象接口。"""
 
     @abstractmethod
-    def update_state(self, story: Story, chapter_index: int, character_id: str, new_state: CharacterState) -> None:
+    def update_state(
+        self, story: Story, chapter_index: int, character_id: str, new_state: CharacterState
+    ) -> None:
         """更新指定角色在指定章节的状态，覆盖同一章节的旧状态。"""
         raise NotImplementedError
 
@@ -46,29 +48,103 @@ class CharacterStateTracker(ICharacterStateTracker):
 
     # Location detection — look for words near location markers.
     _LOCATION_MARKERS: tuple[str, ...] = (
-        "在", "去", "来到", "进入", "离开", "穿过", "前往", "返回",
-        "抵达", "到达", "at", "enter", "leave", "arrive",
+        "在",
+        "去",
+        "来到",
+        "进入",
+        "离开",
+        "穿过",
+        "前往",
+        "返回",
+        "抵达",
+        "到达",
+        "at",
+        "enter",
+        "leave",
+        "arrive",
     )
 
     # Common location-type words that appear across genres.
     _LOCATION_PATTERNS: tuple[str, ...] = (
         # Indoor
-        "房间", "大厅", "走廊", "地下室", "阁楼", "办公室", "客厅", "卧室",
-        "room", "hall", "corridor", "office", "house",
+        "房间",
+        "大厅",
+        "走廊",
+        "地下室",
+        "阁楼",
+        "办公室",
+        "客厅",
+        "卧室",
+        "room",
+        "hall",
+        "corridor",
+        "office",
+        "house",
         # Outdoor
-        "森林", "山", "河", "湖", "海", "沙漠", "草原", "街道", "广场", "桥",
-        "forest", "mountain", "river", "lake", "sea", "street", "bridge", "field",
+        "森林",
+        "山",
+        "河",
+        "湖",
+        "海",
+        "沙漠",
+        "草原",
+        "街道",
+        "广场",
+        "桥",
+        "forest",
+        "mountain",
+        "river",
+        "lake",
+        "sea",
+        "street",
+        "bridge",
+        "field",
         # Institutional / genre-spanning
-        "学校", "医院", "寺庙", "宫殿", "酒馆", "客栈", "飞船", "基地", "塔",
-        "球场", "训练场", "擂台", "竞技场", "赛场", "武馆", "道场",
-        "school", "hospital", "temple", "palace", "tavern", "ship", "base", "tower",
-        "arena", "stadium", "gym", "dojo",
+        "学校",
+        "医院",
+        "寺庙",
+        "宫殿",
+        "酒馆",
+        "客栈",
+        "飞船",
+        "基地",
+        "塔",
+        "球场",
+        "训练场",
+        "擂台",
+        "竞技场",
+        "赛场",
+        "武馆",
+        "道场",
+        "school",
+        "hospital",
+        "temple",
+        "palace",
+        "tavern",
+        "ship",
+        "base",
+        "tower",
+        "arena",
+        "stadium",
+        "gym",
+        "dojo",
     )
 
     # Knowledge-gain signal words.
     _KNOWLEDGE_SIGNALS: tuple[str, ...] = (
-        "发现", "知道", "明白", "意识到", "真相", "学会", "领悟", "掌握",
-        "discover", "learn", "realize", "understand", "find out",
+        "发现",
+        "知道",
+        "明白",
+        "意识到",
+        "真相",
+        "学会",
+        "领悟",
+        "掌握",
+        "discover",
+        "learn",
+        "realize",
+        "understand",
+        "find out",
     )
 
     _EMOTION_DEFAULT = "紧张"
@@ -81,19 +157,27 @@ class CharacterStateTracker(ICharacterStateTracker):
         """
         self.llm = llm
 
-    def update_state(self, story: Story, chapter_index: int, character_id: str, new_state: CharacterState) -> None:
+    def update_state(
+        self, story: Story, chapter_index: int, character_id: str, new_state: CharacterState
+    ) -> None:
         """更新或覆盖指定角色在指定章节的状态快照。"""
-        states = [state for state in story.memory.states.get(character_id, []) if state.chapter != chapter_index]
+        states = [
+            state
+            for state in story.knowledge.character_states.get(character_id, [])
+            if state.chapter != chapter_index
+        ]
         states.append(new_state)
         states.sort(key=lambda item: item.chapter)
-        story.memory.states[character_id] = states
+        story.knowledge.character_states[character_id] = states
 
     def get_current_state(self, story: Story, character_id: str) -> CharacterState | None:
         """返回该角色章节编号最大的状态，无记录时返回 None。"""
-        states = story.memory.states.get(character_id, [])
+        states = story.knowledge.character_states.get(character_id, [])
         return max(states, key=lambda item: item.chapter) if states else None
 
-    def extract_state_from_chapter(self, story: Story, chapter_index: int, content: str, characters: list[Character]) -> list[CharacterState]:
+    def extract_state_from_chapter(
+        self, story: Story, chapter_index: int, content: str, characters: list[Character]
+    ) -> list[CharacterState]:
         """从章节内容提取角色状态，写入 story 并返回状态列表。优先 LLM，失败回退到规则。"""
         states = self._llm_extract(chapter_index, content, characters) if self.llm else []
         if not states:
@@ -102,14 +186,20 @@ class CharacterStateTracker(ICharacterStateTracker):
             self.update_state(story, chapter_index, state.character_id, state)
         return states
 
-    def check_consistency(self, state_before: CharacterState | None, state_after: CharacterState) -> list[str]:
+    def check_consistency(
+        self, state_before: CharacterState | None, state_after: CharacterState
+    ) -> list[str]:
         """对比前后两个状态，检测位置跳变和情绪极端反转等问题，返回问题列表。"""
         if state_before is None:
             return []
         issues: list[str] = []
 
         # Location change without transition record.
-        if state_before.location and state_after.location and state_before.location != state_after.location:
+        if (
+            state_before.location
+            and state_after.location
+            and state_before.location != state_after.location
+        ):
             if not state_after.knowledge_gained:
                 distance = state_after.chapter - state_before.chapter
                 issues.append(
@@ -119,8 +209,11 @@ class CharacterStateTracker(ICharacterStateTracker):
 
         # Extreme emotion flip without relationship change.
         opposite_pairs = (
-            ("恐惧", "兴奋"), ("悲伤", "狂喜"), ("敌对", "亲密"),
-            ("恐惧", "坚定"), ("绝望", "希望"),
+            ("恐惧", "兴奋"),
+            ("悲伤", "狂喜"),
+            ("敌对", "亲密"),
+            ("恐惧", "坚定"),
+            ("绝望", "希望"),
         )
         for before, after in opposite_pairs:
             if before in state_before.emotional_state and after in state_after.emotional_state:
@@ -147,13 +240,25 @@ class CharacterStateTracker(ICharacterStateTracker):
     ) -> None:
         """检测知识获取与后续状态的矛盾（通用版）。"""
         # Look for fear/weakness patterns in knowledge
-        weakness_signals = ("怕", "恐惧", "畏惧", "弱点", "不能", "无法", "fear", "weakness", "cannot")
+        weakness_signals = (
+            "怕",
+            "恐惧",
+            "畏惧",
+            "弱点",
+            "不能",
+            "无法",
+            "fear",
+            "weakness",
+            "cannot",
+        )
         for signal in weakness_signals:
             if signal in knowledge:
                 # Check if the character enters a scenario related to that weakness
                 # without an "overcome" signal
                 overcome_signals = ("克服", "战胜", "适应", "不再", "overcome", "conquer", "adapt")
-                if state_after.location and not any(s in " ".join(state_after.knowledge_gained) for s in overcome_signals):
+                if state_after.location and not any(
+                    s in " ".join(state_after.knowledge_gained) for s in overcome_signals
+                ):
                     if signal not in state_after.emotional_state:
                         short_knowledge = knowledge[:20]
                         issues.append(
@@ -162,7 +267,9 @@ class CharacterStateTracker(ICharacterStateTracker):
                         )
                 return
 
-    def _llm_extract(self, chapter_index: int, content: str, characters: list[Character]) -> list[CharacterState]:
+    def _llm_extract(
+        self, chapter_index: int, content: str, characters: list[Character]
+    ) -> list[CharacterState]:
         """调用 LLM 从章节中提取角色状态，返回 CharacterState 列表。"""
         if not characters:
             return []
@@ -175,11 +282,15 @@ class CharacterStateTracker(ICharacterStateTracker):
         try:
             raw = self.llm.chat_completion([{"role": "user", "content": prompt}])
             data = json.loads(extract_json(raw))
-            return [CharacterState.model_validate(item) for item in data if item.get("character_id")]
+            return [
+                CharacterState.model_validate(item) for item in data if item.get("character_id")
+            ]
         except Exception:
             return []
 
-    def _rule_extract(self, chapter_index: int, content: str, characters: list[Character]) -> list[CharacterState]:
+    def _rule_extract(
+        self, chapter_index: int, content: str, characters: list[Character]
+    ) -> list[CharacterState]:
         """不依赖 LLM 的规则提取：猜测每个角色的情感、位置和知识获取。"""
         if not characters:
             names = sorted(set(re.findall(r"[一-鿿]{2,4}", content)))[:1]

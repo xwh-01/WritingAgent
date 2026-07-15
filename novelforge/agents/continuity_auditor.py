@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from novelforge.agents.base import BaseAgent
-from novelforge.core.models import ChapterOutline, ContinuityAuditReport, ContinuityIssue, Story
+from novelforge.domain import ChapterOutline, ContinuityAuditReport, ContinuityIssue, Story
 
 
 class ContinuityAuditorAgent(BaseAgent):
@@ -37,9 +37,9 @@ class ContinuityAuditorAgent(BaseAgent):
             "continuity_audit\n"
             f"chapter={chapter_index}\n"
             f"outline={outline.model_dump_json() if outline else '{}'}\n"
-            f"story_bible={story.memory.story_bible.model_dump_json()}\n"
-            f"pending_foreshadowing={json.dumps([f.model_dump() for f in story.memory.foreshadowings if f.status == 'pending'], ensure_ascii=False)}\n"
-            f"character_states={json.dumps(story.memory.states, default=str, ensure_ascii=False)}\n"
+            f"story_bible={story.knowledge.guide.model_dump_json()}\n"
+            f"pending_foreshadowing={json.dumps([f.model_dump() for f in story.knowledge.foreshadowings if f.status == 'pending'], ensure_ascii=False)}\n"
+            f"character_states={json.dumps(story.knowledge.character_states, default=str, ensure_ascii=False)}\n"
             f"longform_context={longform_context[:6000]}\n"
             f"content={content[:12000]}"
         )
@@ -47,10 +47,15 @@ class ContinuityAuditorAgent(BaseAgent):
             report = self._parse_model(self._chat(system, user), ContinuityAuditReport)
             report.chapter_index = chapter_index
             report.risk_score = self._clamp(report.risk_score)
-            report.passed = report.risk_score < 7.0 and not any(issue.severity == "high" for issue in report.issues)
+            report.passed = report.risk_score < 7.0 and not any(
+                issue.severity == "high" for issue in report.issues
+            )
+            report.audit_method = "llm"
             return report
         except Exception:
-            return self._rule_audit(story, chapter_index, content, outline)
+            report = self._rule_audit(story, chapter_index, content, outline)
+            report.audit_method = "rule_fallback"
+            return report
 
     def _rule_audit(
         self,
@@ -61,10 +66,14 @@ class ContinuityAuditorAgent(BaseAgent):
     ) -> ContinuityAuditReport:
         """基于规则的连续性审计兜底：检查伏笔到期、冲突体现、约束遵守、位置跳变。"""
         issues: list[ContinuityIssue] = []
-        checked = list(story.memory.story_bible.continuity_constraints[:20])
+        checked = list(story.knowledge.guide.continuity_constraints[:20])
 
-        for item in story.memory.foreshadowings:
-            if item.status == "pending" and item.target_chapter is not None and item.target_chapter <= chapter_index:
+        for item in story.knowledge.foreshadowings:
+            if (
+                item.status == "pending"
+                and item.target_chapter is not None
+                and item.target_chapter <= chapter_index
+            ):
                 issues.append(
                     ContinuityIssue(
                         dimension="foreshadowing",
@@ -90,7 +99,10 @@ class ContinuityAuditorAgent(BaseAgent):
 
         for constraint in checked:
             tokens = self._important_terms(constraint)
-            if any(term in constraint.lower() for term in ("injury", "secret", "foreshadowing", "ability")):
+            if any(
+                term in constraint.lower()
+                for term in ("injury", "secret", "foreshadowing", "ability")
+            ):
                 if tokens and not any(term in content.lower() for term in tokens[:4]):
                     issues.append(
                         ContinuityIssue(
@@ -102,10 +114,24 @@ class ContinuityAuditorAgent(BaseAgent):
                         )
                     )
 
-        for character_id, states in story.memory.states.items():
-            previous = max((state for state in states if state.chapter < chapter_index), key=lambda item: item.chapter, default=None)
-            current = max((state for state in states if state.chapter == chapter_index), key=lambda item: item.chapter, default=None)
-            if previous and current and previous.location and current.location and previous.location != current.location:
+        for character_id, states in story.knowledge.character_states.items():
+            previous = max(
+                (state for state in states if state.chapter < chapter_index),
+                key=lambda item: item.chapter,
+                default=None,
+            )
+            current = max(
+                (state for state in states if state.chapter == chapter_index),
+                key=lambda item: item.chapter,
+                default=None,
+            )
+            if (
+                previous
+                and current
+                and previous.location
+                and current.location
+                and previous.location != current.location
+            ):
                 if not current.knowledge_gained:
                     issues.append(
                         ContinuityIssue(
@@ -125,7 +151,12 @@ class ContinuityAuditorAgent(BaseAgent):
             passed=risk < 7.0 and not any(issue.severity == "high" for issue in issues),
             issues=issues,
             checked_constraints=checked,
-            summary="No major continuity risks found." if not issues else f"Found {len(issues)} continuity risk(s).",
+            summary=(
+                "No major continuity risks found."
+                if not issues
+                else f"Found {len(issues)} continuity risk(s)."
+            ),
+            audit_method="rule",
         )
 
     def _important_terms(self, text: str) -> list[str]:

@@ -9,5 +9,4 @@ jinja2
 cmd2
 networkx
 python-dotenv
-pytest
 python-docx

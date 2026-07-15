@@ -25,16 +25,62 @@ class PacingAnalyzer(IPacingAnalyzer):
 
     # Genre-agnostic conflict words — tension, opposition, stakes, failure.
     conflict_words: tuple[str, ...] = (
-        "冲突", "怒", "战", "追", "逃", "危险", "失败", "秘密", "真相", "背叛", "受伤", "选择",
-        "争", "夺", "杀", "死", "恨", "牺牲", "威胁", "恐惧", "阴谋",
-        "fight", "battle", "conflict", "danger", "betray", "kill", "threat",
+        "冲突",
+        "怒",
+        "战",
+        "追",
+        "逃",
+        "危险",
+        "失败",
+        "秘密",
+        "真相",
+        "背叛",
+        "受伤",
+        "选择",
+        "争",
+        "夺",
+        "杀",
+        "死",
+        "恨",
+        "牺牲",
+        "威胁",
+        "恐惧",
+        "阴谋",
+        "fight",
+        "battle",
+        "conflict",
+        "danger",
+        "betray",
+        "kill",
+        "threat",
     )
 
     # Genre-agnostic action words — physical movement, decisive action.
     action_words: tuple[str, ...] = (
-        "冲", "跑", "扑", "击", "推", "摔", "喊", "抢",
-        "跳", "拉", "踢", "砍", "刺", "射", "挡", "爬",
-        "rush", "strike", "push", "grab", "jump", "kick", "slash", "block",
+        "冲",
+        "跑",
+        "扑",
+        "击",
+        "推",
+        "摔",
+        "喊",
+        "抢",
+        "跳",
+        "拉",
+        "踢",
+        "砍",
+        "刺",
+        "射",
+        "挡",
+        "爬",
+        "rush",
+        "strike",
+        "push",
+        "grab",
+        "jump",
+        "kick",
+        "slash",
+        "block",
     )
 
     def analyze_chapter(self, content: str) -> dict[str, Any]:
@@ -47,7 +93,9 @@ class PacingAnalyzer(IPacingAnalyzer):
         action_hits = sum(content.count(word) for word in self.action_words)
         conflict_intensity = min(10, max(1, 1 + conflict_hits + action_hits // 2))
         dialogue_ratio = round(dialogue_lines / total_lines, 2)
-        description_density = round(sum(len(sentence) for sentence in sentences) / max(len(sentences), 1) / 80, 2)
+        description_density = round(
+            sum(len(sentence) for sentence in sentences) / max(len(sentences), 1) / 80, 2
+        )
         plot_progress = min(10, max(1, action_hits + conflict_hits + len(sentences) // 8))
         return {
             "conflict_intensity": conflict_intensity,
@@ -78,7 +126,7 @@ class PacingAnalyzer(IPacingAnalyzer):
         为避免冒号误判（如 "Chapter 3: The Beginning"），
         冒号检测需要前面有非空格的汉字或字母。
         """
-        if line.startswith((""", """, "\"", "'", "「")):
+        if line.startswith((""", """, '"', "'", "「")):
             return True
         # Colon-style dialogue markers: "某某：..."  or "Name: ..."
         if re.search(r"[一-鿿a-zA-Z]：", line):

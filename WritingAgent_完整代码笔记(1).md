@@ -1,5 +1,7 @@
 # WritingAgent / NovelForge 完整代码笔记
 
+> **历史文档（已归档）**：本文只描述下方标注的旧提交，不代表当前架构。当前设计请阅读 `docs/ARCHITECTURE.md`、`docs/KNOWLEDGE_PIPELINE.md` 与 `docs/STORAGE_MODEL.md`。
+
 > 阅读对象：[xwh-01/WritingAgent main](https://github.com/xwh-01/WritingAgent/tree/main)  
 > 代码基准：[8c39f2e](https://github.com/xwh-01/WritingAgent/commit/8c39f2e926d91db83ca47ccb18a933e704cd1f5f)，提交时间 2026-07-10 11:10:35 +0800  
 > 阅读原则：以当前源码和实际测试为准，不把 README、KNOWLEDGE_BASE.md 中的描述直接当成已实现事实。
@@ -892,4 +894,3 @@ python -m evals.run_eval
 但它也还不是生产级 Agent 系统。因为召回存在版本/时间污染，四个 LLM 长篇分支当前失效，后台任务和持久化缺乏并发保障，Eval 只验证规则，所以最准确的评价是：
 
 > 架构与工程展示已经成形，适合作为 AI 应用/Agent 工程实习项目；下一阶段应优先修正确性和评测可信度，而不是继续增加 Agent 名称或页面数量。
-

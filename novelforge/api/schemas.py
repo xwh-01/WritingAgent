@@ -1,128 +1,101 @@
-"""Pydantic request/response schemas for the REST API."""
+"""Typed HTTP request and response contracts."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from novelforge.core.models import CharacterFact, Chapter, ChapterContract, ChapterOutline, ReviewReport, Story
+from novelforge.domain import (
+    Chapter,
+    ChapterContract,
+    ChapterOutline,
+    Character,
+    CharacterFact,
+    ReviewReport,
+    Story,
+    WorldSetting,
+)
 
 
 class CreateStoryRequest(BaseModel):
-    """创建新故事的请求体。"""
-
-    premise: str
+    premise: str = Field(min_length=1)
     title: str = "Untitled Novel"
     genre: str = "novel"
     style_guide: str = ""
 
 
 class OutlineRequest(BaseModel):
-    """生成章纲的请求体。"""
-
-    num_chapters: int | None = None
+    num_chapters: int | None = Field(default=None, ge=1)
     force: bool = False
 
 
 class BatchWriteRequest(BaseModel):
-    """批量生成章节的请求体。"""
-
-    start_chapter: int
-    end_chapter: int
-    use_auto_revision: bool = True
-    background: bool = True
+    start_chapter: int = Field(ge=1)
+    end_chapter: int = Field(ge=1)
 
 
-class AgenticRunRequest(BaseModel):
-    """自动代理式写作运行的请求体。"""
-
-    objective: str
-    start_chapter: int = 1
-    end_chapter: int = 1
-    use_auto_revision: bool = True
-    background: bool = True
-
-
-class DirectorRunRequest(BaseModel):
-    """Director 代理执行用户指令的请求体。"""
-
-    user_message: str
-    max_steps: int = 6
-
-
-class DirectorResumeRequest(BaseModel):
-    """回答 Director 追问并恢复原运行。"""
-
-    user_response: str
-    max_steps: int = 6
-
-
-class DirectorContinueRequest(BaseModel):
-    """从 Director 检查点继续执行。"""
-
-    max_steps: int = 6
-
-
-class RevisionProposalFeedbackRequest(BaseModel):
-    """要求 Director 基于反馈继续调整候选稿。"""
-
-    instruction: str
-
-
-class ReviseRequest(BaseModel):
-    """章节修订的请求体。"""
-
-    revised_content: str | None = None
+class RevisionRequest(BaseModel):
+    instruction: str = Field(min_length=1)
 
 
 class ChapterContentRequest(BaseModel):
-    """更新章节正文的请求体。"""
-
     title: str | None = None
-    content: str
+    content: str = Field(min_length=1)
     status: str = "draft"
 
 
 class ChapterContractRequest(ChapterContract):
-    """创建或更新章节合同的请求体。"""
-
     pass
 
 
 class CharacterFactRequest(CharacterFact):
-    """新增或覆盖用户确认人物事实的请求体。"""
+    pass
 
+
+class CharacterRequest(Character):
+    pass
+
+
+class WorldSettingRequest(WorldSetting):
     pass
 
 
 class StoryResponse(BaseModel):
-    """故事详情的响应体。"""
-
     story: Story
 
 
 class OutlineResponse(BaseModel):
-    """章纲列表的响应体。"""
-
     outlines: list[ChapterOutline]
 
 
 class ChapterResponse(BaseModel):
-    """单个章节详情的响应体。"""
-
     chapter: Chapter
 
 
 class ReviewResponse(BaseModel):
-    """评审报告的响应体。"""
-
     report: ReviewReport
 
 
 class StatusResponse(BaseModel):
-    """故事状态摘要的响应体。"""
-
     story_id: str
     title: str
     status: str
     current_chapter: int
-    extra: dict = {}
+    extra: dict = Field(default_factory=dict)
+
+
+__all__ = [
+    "BatchWriteRequest",
+    "ChapterContentRequest",
+    "ChapterContractRequest",
+    "ChapterResponse",
+    "CharacterFactRequest",
+    "CharacterRequest",
+    "CreateStoryRequest",
+    "OutlineRequest",
+    "OutlineResponse",
+    "ReviewResponse",
+    "RevisionRequest",
+    "StatusResponse",
+    "StoryResponse",
+    "WorldSettingRequest",
+]

@@ -1,121 +1,197 @@
-"""Small, explicit mutation services for the four Story aggregate domains."""
+"""Small mutation services aligned one-to-one with Story aggregate domains."""
 
 from __future__ import annotations
 
-from novelforge.core.models import (
-    AgentTraceRun,
-    AutoRevisionReport,
-    AutonomousRunReport,
+from novelforge.domain import (
     BatchWriteReport,
     Chapter,
     ChapterContract,
+    ChapterGenerationReport,
     ChapterOutline,
+    ChapterStatus,
+    Character,
     CharacterContinuityReport,
     CharacterFact,
     CharacterState,
     ContinuityAuditReport,
-    MemoryCard,
+    ProposalStatus,
+    RetrievalNote,
+    ReviewReport,
     RevisionProposal,
     Story,
+    WorldSetting,
+    utc_now,
 )
 
 
-class ContentService:
-    """Owns creative source material: outlines, contracts, chapters, and versions."""
+class DesignService:
+    """Owns creative intent: cast, world, outlines, and chapter contracts."""
 
     def set_outlines(self, story: Story, outlines: list) -> None:
-        story.content.outlines = outlines
+        story.design.outlines = outlines
 
     def append_outlines(self, story: Story, outlines: list[ChapterOutline]) -> None:
-        story.content.outlines.extend(outlines)
+        story.design.outlines.extend(outlines)
+
+    def save_contract(self, story: Story, contract: ChapterContract) -> ChapterContract:
+        story.design.chapter_contracts[contract.chapter_index] = contract
+        return contract
+
+    def add_character(self, story: Story, character: Character) -> None:
+        story.design.characters[character.id] = character
+
+    def add_world_setting(self, story: Story, setting: WorldSetting) -> None:
+        story.design.world_settings = [
+            item for item in story.design.world_settings if item.id != setting.id
+        ]
+        story.design.world_settings.append(setting)
+
+
+class ManuscriptService:
+    """Owns generated or user-edited chapter text and chapter versions."""
 
     def save_chapter(self, story: Story, chapter: Chapter) -> Chapter:
-        story.content.chapters[chapter.index] = chapter
+        story.manuscript.chapters[chapter.index] = chapter
         story.current_chapter = chapter.index
         return chapter
 
-    def save_contract(self, story: Story, contract: ChapterContract) -> ChapterContract:
-        story.content.chapter_contracts[contract.chapter_index] = contract
-        return contract
-
     def get_chapter(self, story: Story, chapter_index: int) -> Chapter | None:
-        return story.content.chapters.get(chapter_index)
+        return story.manuscript.chapters.get(chapter_index)
 
     def set_chapter(self, story: Story, chapter_index: int, chapter: Chapter) -> None:
-        story.content.chapters[chapter_index] = chapter
+        story.manuscript.chapters[chapter_index] = chapter
 
-    def add_character(self, story: Story, character) -> None:
-        story.content.characters[character.id] = character
+    def commit_candidate(self, story: Story, candidate: Chapter) -> Chapter:
+        """Promote one accepted candidate and preserve exactly one prior snapshot."""
+        return self._promote(story, candidate, ChapterStatus.REVIEWED)
 
-    def add_world_setting(self, story: Story, setting) -> None:
-        story.content.world_settings.append(setting)
+    def commit_user_edit(self, story: Story, candidate: Chapter) -> Chapter:
+        """Commit explicit user-authored prose while retaining the requested status."""
+        return self._promote(story, candidate, candidate.status)
+
+    @staticmethod
+    def _promote(
+        story: Story,
+        candidate: Chapter,
+        status: ChapterStatus,
+    ) -> Chapter:
+        official = story.manuscript.chapters.get(candidate.index)
+        committed = candidate.model_copy(deep=True)
+        if official is None:
+            committed.version = 1
+            committed.history = []
+        else:
+            committed.version = official.version + 1
+            committed.history = list(official.history)
+            if official.content:
+                committed.history.append(official.snapshot())
+        committed.status = status
+        story.manuscript.chapters[committed.index] = committed
+        story.current_chapter = committed.index
+        return committed
 
 
-class MemoryService:
-    """Owns durable facts and long-form recall state."""
+class KnowledgeService:
+    """Own canonical knowledge derived from committed manuscript content."""
 
     def set_facts(self, story: Story, facts: list[CharacterFact]) -> None:
-        story.memory.facts = facts
+        story.knowledge.character_facts = facts
 
     def add_fact(self, story: Story, fact: CharacterFact) -> CharacterFact:
-        story.memory.facts = [item for item in story.memory.facts if item.id != fact.id]
-        story.memory.facts.append(fact)
+        story.knowledge.character_facts = [
+            item for item in story.knowledge.character_facts if item.id != fact.id
+        ]
+        story.knowledge.character_facts.append(fact)
         return fact
 
     def confirm_fact(self, story: Story, fact: CharacterFact, ledger) -> CharacterFact:
-        """Apply the fact ledger's precedence rules through the memory ownership boundary."""
+        """Apply the fact ledger's precedence rules through the knowledge boundary."""
         return ledger.upsert_confirmed(story, fact)
 
     def remove_confirmed_fact(self, story: Story, fact_id: str, ledger) -> bool:
         return ledger.delete_confirmed(story, fact_id)
 
     def save_states(self, story: Story, states: dict[str, list[CharacterState]]) -> None:
-        story.memory.states = states
+        story.knowledge.character_states = states
 
-    def update_character_state(self, story: Story, character_id: str, states: list[CharacterState]) -> None:
-        story.memory.states[character_id] = states
+    def update_character_state(
+        self, story: Story, character_id: str, states: list[CharacterState]
+    ) -> None:
+        story.knowledge.character_states[character_id] = states
 
-    def save_memory_cards(self, story: Story, cards: list[MemoryCard]) -> None:
-        story.memory.cards = cards
+    def save_retrieval_notes(self, story: Story, notes: list[RetrievalNote]) -> None:
+        story.knowledge.retrieval_notes = notes
 
     def save_chapter_summary(self, story: Story, chapter_index: int, summary) -> None:
-        story.memory.chapter_summaries[chapter_index] = summary
+        story.knowledge.chapter_summaries[chapter_index] = summary
 
     def save_chapter_summaries(self, story: Story, summaries: dict) -> None:
-        story.memory.chapter_summaries = summaries
+        story.knowledge.chapter_summaries = summaries
 
     def save_volume_summaries(self, story: Story, summaries: list) -> None:
-        story.memory.volume_summaries = summaries
+        story.knowledge.volume_summaries = summaries
 
     def save_arc_summaries(self, story: Story, summaries: list) -> None:
-        story.memory.arc_summaries = summaries
+        story.knowledge.arc_summaries = summaries
 
     def add_foreshadowing(self, story: Story, foreshadowing) -> None:
-        story.memory.foreshadowings.append(foreshadowing)
+        story.knowledge.foreshadowings.append(foreshadowing)
 
-    def add_causal_event(self, story: Story, event) -> None:
-        story.memory.causal_events.append(event)
+    def add_timeline_event(self, story: Story, event) -> None:
+        story.knowledge.timeline.append(event)
 
-    def set_causal_events(self, story: Story, events: list) -> None:
-        story.memory.causal_events = events
-
-    def update_story_bible_constraint(self, story: Story, constraint: str) -> None:
-        if constraint not in story.memory.story_bible.continuity_constraints:
-            story.memory.story_bible.continuity_constraints.append(constraint)
+    def set_timeline(self, story: Story, events: list) -> None:
+        story.knowledge.timeline = events
 
 
 class QualityService:
     """Owns diagnostics, review artifacts, and approval-gated revision proposals."""
 
-    def save_auto_revision_report(self, story: Story, chapter_index: int, report: AutoRevisionReport) -> None:
-        story.quality.auto_revision_reports[chapter_index] = report
+    def save_review_report(self, story: Story, chapter_index: int, report: ReviewReport) -> None:
+        story.quality.review_reports[chapter_index] = report
 
-    def save_continuity_report(self, story: Story, chapter_index: int, report: ContinuityAuditReport) -> None:
+    def invalidate_chapter_assessments(self, story: Story, chapter_index: int) -> None:
+        """Remove reports tied to old prose and close stale pending proposals."""
+        story.quality.review_reports.pop(chapter_index, None)
+        story.quality.continuity_reports.pop(chapter_index, None)
+        story.quality.generation_reports.pop(chapter_index, None)
+        for proposal in story.quality.revision_proposals:
+            if (
+                proposal.chapter_index == chapter_index
+                and proposal.status is ProposalStatus.AWAITING_APPROVAL
+            ):
+                proposal.status = ProposalStatus.REJECTED
+                proposal.updated_at = utc_now()
+
+    def invalidate_story_assessments(self, story: Story) -> None:
+        """Invalidate quality evidence after author-controlled canon changes."""
+        story.quality.review_reports.clear()
+        story.quality.continuity_reports.clear()
+        story.quality.generation_reports.clear()
+        story.quality.character_continuity_reports.clear()
+        for proposal in story.quality.revision_proposals:
+            if proposal.status is ProposalStatus.AWAITING_APPROVAL:
+                proposal.status = ProposalStatus.REJECTED
+                proposal.updated_at = utc_now()
+
+    def save_generation_report(
+        self,
+        story: Story,
+        report: ChapterGenerationReport,
+    ) -> None:
+        story.quality.generation_reports[report.chapter_index] = report
+
+    def save_continuity_report(
+        self, story: Story, chapter_index: int, report: ContinuityAuditReport
+    ) -> None:
         story.quality.continuity_reports[chapter_index] = report
 
-    def save_character_continuity_report(self, story: Story, report: CharacterContinuityReport) -> None:
+    def save_character_continuity_report(
+        self, story: Story, report: CharacterContinuityReport
+    ) -> None:
         story.quality.character_continuity_reports = [
-            item for item in story.quality.character_continuity_reports
+            item
+            for item in story.quality.character_continuity_reports
             if not (
                 item.character_id == report.character_id
                 and item.start_chapter == report.start_chapter
@@ -129,23 +205,14 @@ class QualityService:
         return proposal
 
     def get_proposal(self, story: Story, proposal_id: str) -> RevisionProposal | None:
-        return next((item for item in story.quality.revision_proposals if item.id == proposal_id), None)
+        return next(
+            (item for item in story.quality.revision_proposals if item.id == proposal_id), None
+        )
 
 
-class AgentRunService:
-    """Owns persistent Director, autonomous, and batch execution records."""
-
-    def add_director_run(self, story: Story, run: AgentTraceRun) -> AgentTraceRun:
-        story.agent_runs.director.append(run)
-        return run
-
-    def add_autonomous_run(self, story: Story, run: AutonomousRunReport) -> AutonomousRunReport:
-        story.agent_runs.autonomous.append(run)
-        return run
+class RunService:
+    """Own persistent reports for multi-chapter operations."""
 
     def add_batch_report(self, story: Story, report: BatchWriteReport) -> BatchWriteReport:
-        story.agent_runs.batch_reports.append(report)
+        story.runs.batch_reports.append(report)
         return report
-
-    def get_director_run(self, story: Story, run_id: str) -> AgentTraceRun | None:
-        return next((run for run in story.agent_runs.director if run.id == run_id), None)

@@ -1,6 +1,6 @@
 """Long-form continuity and structure subsystems."""
 
-from novelforge.longform.manager import LongformManager
-from novelforge.longform.memory_engine import ChapterContextPack, MemoryEngineV2
+from novelforge.longform.knowledge_context import KnowledgeContextEngine, WritingContext
+from novelforge.longform.knowledge_system import StoryKnowledgeSystem
 
-__all__ = ["ChapterContextPack", "LongformManager", "MemoryEngineV2"]
+__all__ = ["WritingContext", "StoryKnowledgeSystem", "KnowledgeContextEngine"]

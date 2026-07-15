@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from novelforge.agents.base import BaseAgent
-from novelforge.core.models import Beat, ChapterContract, ChapterOutline, Story
+from novelforge.domain import Beat, ChapterContract, ChapterOutline, Story
 
 
 class PlannerAgent(BaseAgent):
@@ -81,8 +81,15 @@ class PlannerAgent(BaseAgent):
         if [item.scene_index for item in beats] != expected:
             raise ValueError("Scene indexes must be unique and contiguous from 1.")
         for beat in beats:
-            if not (beat.purpose or beat.goal) or not beat.character_goals or not beat.obstacle or not beat.outcome:
-                raise ValueError(f"Scene {beat.scene_index} lacks purpose, character goals, obstacle, or outcome.")
+            if (
+                not (beat.purpose or beat.goal)
+                or not beat.character_goals
+                or not beat.obstacle
+                or not beat.outcome
+            ):
+                raise ValueError(
+                    f"Scene {beat.scene_index} lacks purpose, character goals, obstacle, or outcome."
+                )
             if beat.target_length <= 0:
                 raise ValueError(f"Scene {beat.scene_index} must have a positive target_length.")
             beat.content = ""
@@ -93,12 +100,19 @@ class PlannerAgent(BaseAgent):
         planned_length = sum(item.target_length for item in beats)
         tolerance = max(200, int(target_length * 0.25))
         if abs(planned_length - target_length) > tolerance:
-            raise ValueError(
-                f"Scene target lengths total {planned_length}, too far from chapter target {target_length}."
-            )
+            allocated = [
+                max(1, round(target_length * item.target_length / planned_length)) for item in beats
+            ]
+            allocated[-1] += target_length - sum(allocated)
+            if allocated[-1] <= 0:
+                raise ValueError("Chapter target length is too small for the scene plan.")
+            for beat, normalized in zip(beats, allocated, strict=True):
+                beat.target_length = normalized
         return beats
 
-    def generate_chapter_contract(self, story: Story, chapter_outline: ChapterOutline) -> ChapterContract:
+    def generate_chapter_contract(
+        self, story: Story, chapter_outline: ChapterOutline
+    ) -> ChapterContract:
         """把章节大纲扩展成可编辑、可验收的章节执行合同。"""
         system = (
             "你是小说章节制片人。严格输出 ChapterContract JSON，必须保留大纲目标，"
@@ -110,7 +124,7 @@ class PlannerAgent(BaseAgent):
             "generate_chapter_contract\n"
             f"故事前提: {story.premise}\n"
             f"章节大纲: {chapter_outline.model_dump_json()}\n"
-            f"当前故事线: {story.memory.story_bible.active_threads}\n"
+            f"当前故事线: {story.knowledge.guide.active_threads}\n"
             f"文风: {story.style_guide}\n只输出 JSON。"
         )
         try:
@@ -122,7 +136,7 @@ class PlannerAgent(BaseAgent):
                 chapter_index=chapter_outline.chapter_index,
                 pov_character=chapter_outline.pov_character,
                 must_happen=[chapter_outline.summary],
-                active_threads=list(story.memory.story_bible.active_threads),
+                active_threads=list(story.knowledge.guide.active_threads),
                 style_requirements=[story.style_guide] if story.style_guide else [],
                 notes=f"核心冲突：{chapter_outline.conflict}",
             )

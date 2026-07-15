@@ -1,52 +1,31 @@
-# Storage Model
+# 存储模型
 
-## Data ownership
+## 唯一事实源
 
-`novelforge/storage/novelforge.db` is the sole canonical source for a story. Its Story document is explicitly grouped by domain:
+| 类别 | 默认位置 | 权威性 | 恢复方式 |
+|---|---|---|---|
+| 完整 `Story` 聚合 | `.data/novelforge/novelforge.db` | 唯一事实源 | 数据库备份 |
+| 全文、向量、图索引 | `.data/novelforge/indexes/` | 可删除投影 | 从 SQLite 重建 |
+| DOCX / Markdown 制品 | `.data/novelforge/artifacts/` | 可删除输出 | 重新导出 |
 
-```text
-Story
-├── content     # characters, world, outlines, contracts, chapters, versions
-├── memory      # facts, states, foreshadowings, causal events, summaries, cards
-├── quality     # reviews, continuity diagnostics, proposals
-└── agent_runs  # Director plans/tasks/traces and autonomous/batch runs
-```
+没有旧 JSON 导入、双写目录或索引反向恢复逻辑。
 
-The following are derived data and must never be used to recover or overwrite canonical state:
-
-- `storage/indexes/fts.sqlite3`: full-text retrieval index
-- `storage/chroma_data/`: vector retrieval index
-- `storage/graph_data/`: relationship graph index
-
-`storage/artifacts/` contains non-canonical renderings: trace exports, Markdown reports, and document exports.
-
-## Write rules
+## 提交协议
 
 ```text
-API / Workspace / CLI
-  -> Engine application method
-  -> StoryRepository.save() transaction
-  -> storage_events outbox entry
-  -> derived index synchronization or rebuild
+Story.assert_consistent()
+        ↓
+SQLite 事务保存 Story
+        ↓
+同一事务写 projection_outbox
+        ↓
+尝试重建派生索引
+        ├─ 成功：确认 outbox
+        └─ 失败：保留 outbox，正式提交仍成功
 ```
 
-- Agents produce decisions, plans, reports, and candidate text. They do not write files or databases directly.
-- ToolRegistry validates arguments and invokes Engine use cases; it does not persist domain state itself.
-- `ContentService`, `MemoryService`, `QualityService`, and `AgentRunService` own mutations in their respective Story domains.
-- Engine methods are the application write boundary. A state change ends with `save_state()`, which writes one canonical SQLite transaction.
-- Indexes are disposable. Use `POST /stories/{story_id}/indexes/rebuild` to recreate them from SQLite.
+不能因为索引失败把正文提交报告成失败。否则调用方重试生成会产生多余版本。索引同步状态通过 `GET /stories/{id}/storage` 查看，并可用 `POST /stories/{id}/indexes/rebuild` 恢复。
 
-## Legacy migration
+## 删除
 
-On startup, `StoryRepository` imports any unseen `storage/story_state/{story_id}.json` files once and records a `legacy_json_imported` event. Legacy JSON is retained as a read-only recovery copy; all subsequent writes go only to `novelforge.db`.
-
-## Artifact layout
-
-```text
-storage/artifacts/stories/{story_id}/
-  traces/{run_id}.json
-  traces/{run_id}.debug.md
-  reports/chapter-{chapter_index}-auto-revision.md
-  exports/{title}.md
-  exports/{title}.docx
-```
+`StoryStorageService.delete_story()` 是“删除一个故事全部数据”的唯一跨存储入口，依次清理索引、制品和正式记录。仓储自身的 `delete()` 只负责 SQLite，不暗中操作其他存储。

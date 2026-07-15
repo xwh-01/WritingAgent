@@ -8,17 +8,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from novelforge.core.models import (
-    CausalEvent,
+from novelforge.domain import (
+    ChapterOutline,
     Character,
     CharacterState,
-    ChapterOutline,
     Foreshadowing,
     Story,
+    TimelineEvent,
 )
 from novelforge.longform.causality import CausalityTracker
-from novelforge.longform.manager import LongformManager
-
+from novelforge.longform.knowledge_system import StoryKnowledgeSystem
 
 CASES_DIR = Path(__file__).parent / "cases"
 REPORT_PATH = Path(__file__).parent / "report.md"
@@ -71,12 +70,16 @@ def run_case(path: Path, baseline: str = "full") -> EvalResult:
     matched_keywords = [keyword for keyword in expected_keywords if keyword in "\n".join(findings)]
     missing_keywords = [keyword for keyword in expected_keywords if keyword not in matched_keywords]
     false_positive_count = sum(
-        1 for finding in findings if expected_keywords and not any(keyword in finding for keyword in expected_keywords)
+        1
+        for finding in findings
+        if expected_keywords and not any(keyword in finding for keyword in expected_keywords)
     )
     passed = bool(findings) and not missing_keywords
     baseline_note = baseline
     if baseline != "full":
-        baseline_note += " (simulated: deterministic checkers remain active; this labels regression slices)"
+        baseline_note += (
+            " (simulated: deterministic checkers remain active; this labels regression slices)"
+        )
     summary = (
         f"{len(findings)} issue(s), matched {len(matched_keywords)}/{len(expected_keywords)} keywords "
         f"under {baseline_note}."
@@ -100,10 +103,10 @@ def run_case(path: Path, baseline: str = "full") -> EvalResult:
 def collect_findings(data: dict[str, Any], story: Story, category: str) -> list[str]:
     if category == "causal_ordering":
         tracker = CausalityTracker()
-        new_event = CausalEvent.model_validate(data["new_event"])
+        new_event = TimelineEvent.model_validate(data["new_event"])
         return tracker.check_conflicts(story, new_event)
     if category == "pacing_trend":
-        manager = LongformManager()
+        manager = StoryKnowledgeSystem()
         history = []
         for item in data.get("pacing_history", []):
             analysis = manager.pacing_analyzer.analyze_chapter(item["content"])
@@ -111,7 +114,7 @@ def collect_findings(data: dict[str, Any], story: Story, category: str) -> list[
         warning = manager.pacing_analyzer.check_pacing_trend(history)
         return [] if "正常" in warning or "姝ｅ父" in warning else [warning]
 
-    manager = LongformManager()
+    manager = StoryKnowledgeSystem()
     chapter = data.get("chapter_under_review", {})
     findings_map = manager.review_chapter_consistency(
         story,
@@ -147,16 +150,24 @@ def build_story(data: dict[str, Any]) -> Story:
         genre=story_data.get("genre", "novel"),
     )
     for item in data.get("characters", []):
-        character = Character.model_validate({
-            "id": item.get("id"),
-            "name": item.get("name", item.get("id")),
-            "personality": item.get("personality", ""),
-        })
-        story.content.characters[character.id] = character
-    story.content.outlines = [ChapterOutline.model_validate(item) for item in data.get("outlines", [])]
-    story.memory.foreshadowings = [Foreshadowing.model_validate(item) for item in data.get("foreshadowings", [])]
-    story.memory.causal_events = [CausalEvent.model_validate(item) for item in data.get("causal_events", [])]
-    story.memory.states = {
+        character = Character.model_validate(
+            {
+                "id": item.get("id"),
+                "name": item.get("name", item.get("id")),
+                "personality": item.get("personality", ""),
+            }
+        )
+        story.design.characters[character.id] = character
+    story.design.outlines = [
+        ChapterOutline.model_validate(item) for item in data.get("outlines", [])
+    ]
+    story.knowledge.foreshadowings = [
+        Foreshadowing.model_validate(item) for item in data.get("foreshadowings", [])
+    ]
+    story.knowledge.timeline = [
+        TimelineEvent.model_validate(item) for item in data.get("causal_events", [])
+    ]
+    story.knowledge.character_states = {
         character_id: [CharacterState.model_validate(state) for state in states]
         for character_id, states in data.get("character_states", {}).items()
     }

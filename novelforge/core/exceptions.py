@@ -17,5 +17,15 @@ class WorkflowError(NovelForgeError):
     """Raised when a workflow transition is invalid."""
 
 
-class PersistenceError(NovelForgeError):
-    """Raised when story state cannot be saved or loaded."""
+class GenerationRejected(WorkflowError):
+    """Raised when a generated candidate exhausts repair attempts without passing gates."""
+
+    def __init__(
+        self,
+        message: str,
+        report: object | None = None,
+        story: object | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.report = report
+        self.story = story

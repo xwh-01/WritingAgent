@@ -34,52 +34,148 @@ class MockLLMClient(LLMClient):
                 (name for name in character_names if str(name).lower() in lowered), None
             )
             range_match = re.search(r"第?\s*(\d+)\s*(?:到|至|[-~])\s*第?\s*(\d+)\s*章?", objective)
-            if any(token in objective for token in ("人设", "角色一致", "角色连续")) or "character" in lowered:
+            if (
+                any(token in objective for token in ("人设", "角色一致", "角色连续"))
+                or "character" in lowered
+            ):
                 if not selected_character:
-                    tasks = [{"id": "task-question", "description": "你想检查哪位角色的人设或状态轨迹？", "selected_tool": "ask_user"}]
+                    tasks = [
+                        {
+                            "id": "task-question",
+                            "description": "你想检查哪位角色的人设或状态轨迹？",
+                            "selected_tool": "ask_user",
+                        }
+                    ]
                 else:
                     start = int(range_match.group(1)) if range_match else 1
                     end = int(range_match.group(2)) if range_match else max(chapter, 1)
-                    tasks = [{
-                        "id": "task-character-arc",
-                        "description": f"审计 {selected_character} 在第{start}到第{end}章的角色连续性",
-                        "selected_tool": "analyze_character_continuity",
-                        "tool_args": {"character": selected_character, "start_chapter": start, "end_chapter": max(start, end)},
-                        "success_criteria": ["给出跨章节角色轨迹和带证据的问题", "定位需要修订的章节"],
-                    }]
+                    tasks = [
+                        {
+                            "id": "task-character-arc",
+                            "description": f"审计 {selected_character} 在第{start}到第{end}章的角色连续性",
+                            "selected_tool": "analyze_character_continuity",
+                            "tool_args": {
+                                "character": selected_character,
+                                "start_chapter": start,
+                                "end_chapter": max(start, end),
+                            },
+                            "success_criteria": [
+                                "给出跨章节角色轨迹和带证据的问题",
+                                "定位需要修订的章节",
+                            ],
+                        }
+                    ]
             elif any(token in lowered for token in ("改", "修", "revise")):
                 if chapter <= 0:
-                    tasks = [{"id": "task-question", "description": "你想修改第几章？", "selected_tool": "ask_user"}]
+                    tasks = [
+                        {
+                            "id": "task-question",
+                            "description": "你想修改第几章？",
+                            "selected_tool": "ask_user",
+                        }
+                    ]
                 else:
                     tasks = [
-                        {"id": "task-inspect", "description": f"读取第{chapter}章当前正文", "selected_tool": "inspect_chapter", "tool_args": {"chapter_index": chapter, "include_content": True}, "success_criteria": ["取得当前有效正文和版本"]},
-                        {"id": "task-revise", "description": f"生成第{chapter}章候选修订稿", "selected_tool": "revise_chapter", "tool_args": {"chapter_index": chapter, "revision_instruction": objective}, "dependencies": ["task-inspect"], "success_criteria": ["候选稿满足用户要求", "正式正文尚未覆盖"]},
+                        {
+                            "id": "task-inspect",
+                            "description": f"读取第{chapter}章当前正文",
+                            "selected_tool": "inspect_chapter",
+                            "tool_args": {"chapter_index": chapter, "include_content": True},
+                            "success_criteria": ["取得当前有效正文和版本"],
+                        },
+                        {
+                            "id": "task-revise",
+                            "description": f"生成第{chapter}章候选修订稿",
+                            "selected_tool": "revise_chapter",
+                            "tool_args": {
+                                "chapter_index": chapter,
+                                "revision_instruction": objective,
+                            },
+                            "dependencies": ["task-inspect"],
+                            "success_criteria": ["候选稿满足用户要求", "正式正文尚未覆盖"],
+                        },
                     ]
             elif "伏笔" in objective or "foreshadow" in lowered:
-                tasks = [{"id": "task-foreshadow", "description": "检查未回收伏笔", "selected_tool": "list_foreshadowings", "tool_args": {"status": "pending"}, "success_criteria": ["返回未回收伏笔"]}]
-            elif any(token in lowered for token in ("检查", "审查", "review", "continuity", "连续")):
+                tasks = [
+                    {
+                        "id": "task-foreshadow",
+                        "description": "检查未回收伏笔",
+                        "selected_tool": "list_foreshadowings",
+                        "tool_args": {"status": "pending"},
+                        "success_criteria": ["返回未回收伏笔"],
+                    }
+                ]
+            elif any(
+                token in lowered for token in ("检查", "审查", "review", "continuity", "连续")
+            ):
                 if chapter <= 0:
-                    tasks = [{"id": "task-question", "description": "你想检查第几章？", "selected_tool": "ask_user"}]
+                    tasks = [
+                        {
+                            "id": "task-question",
+                            "description": "你想检查第几章？",
+                            "selected_tool": "ask_user",
+                        }
+                    ]
                 else:
-                    tasks = [{"id": "task-review", "description": f"审查第{chapter}章", "selected_tool": "review_chapter", "tool_args": {"chapter_index": chapter}, "success_criteria": ["给出结构化问题和建议"]}]
+                    tasks = [
+                        {
+                            "id": "task-review",
+                            "description": f"审查第{chapter}章",
+                            "selected_tool": "review_chapter",
+                            "tool_args": {"chapter_index": chapter},
+                            "success_criteria": ["给出结构化问题和建议"],
+                        }
+                    ]
                     if "continuity" in lowered or "连续" in objective:
-                        tasks.append({"id": "task-continuity", "description": f"检查第{chapter}章连续性", "selected_tool": "audit_continuity", "tool_args": {"chapter_index": chapter}, "dependencies": ["task-review"], "success_criteria": ["给出连续性风险和证据"]})
+                        tasks.append(
+                            {
+                                "id": "task-continuity",
+                                "description": f"检查第{chapter}章连续性",
+                                "selected_tool": "audit_continuity",
+                                "tool_args": {"chapter_index": chapter},
+                                "dependencies": ["task-review"],
+                                "success_criteria": ["给出连续性风险和证据"],
+                            }
+                        )
             elif any(token in lowered for token in ("继续", "下一章", "write")):
                 current = int((payload.get("story_state") or {}).get("current_chapter") or 0)
                 target = max(current + 1, 1)
                 tasks = [
-                    {"id": "task-outline", "description": f"确保大纲覆盖第{target}章", "selected_tool": "create_outline", "tool_args": {"num_chapters": target}, "success_criteria": [f"存在第{target}章大纲"]},
-                    {"id": "task-write", "description": f"完成第{target}章写作和质量门", "selected_tool": "auto_write_chapter", "tool_args": {"chapter_index": target}, "dependencies": ["task-outline"], "success_criteria": ["章节正文已生成", "质量门执行完成"]},
+                    {
+                        "id": "task-outline",
+                        "description": f"确保大纲覆盖第{target}章",
+                        "selected_tool": "create_outline",
+                        "tool_args": {"num_chapters": target},
+                        "success_criteria": [f"存在第{target}章大纲"],
+                    },
+                    {
+                        "id": "task-write",
+                        "description": f"完成第{target}章写作和质量门",
+                        "selected_tool": "auto_write_chapter",
+                        "tool_args": {"chapter_index": target},
+                        "dependencies": ["task-outline"],
+                        "success_criteria": ["章节正文已生成", "质量门执行完成"],
+                    },
                 ]
             else:
-                tasks = [{"id": "task-status", "description": "读取项目状态", "selected_tool": "show_status", "success_criteria": ["返回当前项目状态"]}]
-            return json.dumps({
-                "objective": objective,
-                "success_criteria": ["完成用户明确目标", "保留故事事实与连续性"],
-                "tasks": tasks,
-                "status": "planned",
-                "assumptions": [],
-            }, ensure_ascii=False)
+                tasks = [
+                    {
+                        "id": "task-status",
+                        "description": "读取项目状态",
+                        "selected_tool": "show_status",
+                        "success_criteria": ["返回当前项目状态"],
+                    }
+                ]
+            return json.dumps(
+                {
+                    "objective": objective,
+                    "success_criteria": ["完成用户明确目标", "保留故事事实与连续性"],
+                    "tasks": tasks,
+                    "status": "planned",
+                    "assumptions": [],
+                },
+                ensure_ascii=False,
+            )
         if '"marker": "director_task_evaluation"' in prompt:
             try:
                 payload = json.loads(messages[-1].get("content", "{}"))
@@ -89,16 +185,25 @@ class MockLLMClient(LLMClient):
             result = payload.get("tool_result") or {}
             criteria = task.get("success_criteria") or ["工具产生有效结果"]
             observation = str(result.get("observation") or result.get("output_summary") or "")
-            return json.dumps({
-                "passed": bool(observation),
-                "criterion_results": [
-                    {"criterion": criterion, "passed": bool(observation), "evidence": observation[:300]}
-                    for criterion in criteria
-                ],
-                "recoverable": True,
-                "recommended_action": "await_approval" if result.get("requires_approval") else "complete",
-                "feedback": "" if observation else "工具没有返回可验收的观察结果。",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "passed": bool(observation),
+                    "criterion_results": [
+                        {
+                            "criterion": criterion,
+                            "passed": bool(observation),
+                            "evidence": observation[:300],
+                        }
+                        for criterion in criteria
+                    ],
+                    "recoverable": True,
+                    "recommended_action": (
+                        "await_approval" if result.get("requires_approval") else "complete"
+                    ),
+                    "feedback": "" if observation else "工具没有返回可验收的观察结果。",
+                },
+                ensure_ascii=False,
+            )
         if "director_decision" in prompt:
             request_match = re.search(r'"user_message"\s*:\s*("(?:\\.|[^"\\])*")', prompt)
             try:
@@ -115,7 +220,11 @@ class MockLLMClient(LLMClient):
                     "The user asked to inspect unresolved foreshadowings.",
                     False,
                 )
-            elif "检查" in director_request or "审查" in director_request or "review" in director_request_lower:
+            elif (
+                "检查" in director_request
+                or "审查" in director_request
+                or "review" in director_request_lower
+            ):
                 intent, tool, args, reason, cont = (
                     "review_chapter",
                     "review_chapter",
@@ -123,7 +232,11 @@ class MockLLMClient(LLMClient):
                     "The user asked to inspect chapter quality.",
                     False,
                 )
-            elif "改" in director_request or "修" in director_request or "revise" in director_request_lower:
+            elif (
+                "改" in director_request
+                or "修" in director_request
+                or "revise" in director_request_lower
+            ):
                 intent, tool, args, reason, cont = (
                     "revise_chapter",
                     "revise_chapter",
@@ -131,7 +244,11 @@ class MockLLMClient(LLMClient):
                     "The user asked to revise a chapter.",
                     False,
                 )
-            elif "继续" in director_request or "下一章" in director_request or "write" in director_request_lower:
+            elif (
+                "继续" in director_request
+                or "下一章" in director_request
+                or "write" in director_request_lower
+            ):
                 if step <= 1:
                     intent, tool, args, reason, cont = (
                         "prepare_next_chapter",
@@ -203,11 +320,11 @@ class MockLLMClient(LLMClient):
                             "input_summary": "Audit continuity.",
                         },
                         {
-                            "agent": "MemoryEngine",
-                            "action": "memory_checkpoint",
-                            "reason": "Persist chapter memory.",
+                            "agent": "KnowledgeSystem",
+                            "action": "knowledge_checkpoint",
+                            "reason": "Persist chapter knowledge.",
                             "chapter_index": 1,
-                            "input_summary": "Update memory.",
+                            "input_summary": "Update knowledge.",
                         },
                     ],
                 },
@@ -225,7 +342,7 @@ class MockLLMClient(LLMClient):
                 },
                 ensure_ascii=False,
             )
-        if "memory_extract" in prompt:
+        if "knowledge_extract" in prompt:
             return json.dumps(
                 {
                     "characters": [
@@ -247,46 +364,196 @@ class MockLLMClient(LLMClient):
                             "id": "world-core-setting",
                             "category": "world_rule",
                             "content": "关键场景和规则会持续影响人物能力与剧情推进。",
-                            "metadata": {"source": "mock_memory_extract"},
+                            "metadata": {"source": "mock_knowledge_extract"},
                         }
                     ],
                     "relationships": [],
-                    "continuity_constraints": ["后续章节需要保持主角目标、关键线索和世界规则的连续性。"],
+                    "continuity_constraints": [
+                        "后续章节需要保持主角目标、关键线索和世界规则的连续性。"
+                    ],
                 },
                 ensure_ascii=False,
             )
         if "chapter_contract_semantic_validation" in prompt:
-            requirements_match = re.search(r"合同项:\s*(\[.*?\])\s*\n带编号正文:", prompt, re.DOTALL)
+            requirements_match = re.search(
+                r"合同项:\s*(\[.*?\])\s*\n带编号正文:", prompt, re.DOTALL
+            )
             requirements = json.loads(requirements_match.group(1)) if requirements_match else []
             body = prompt.split("带编号正文:", 1)[-1]
             paragraphs = re.findall(r"\[段落(\d+)\]\s*(.*?)(?=\n\[段落\d+\]|$)", body, re.DOTALL)
+
+            def important_tokens(text: str) -> list[str]:
+                chunks = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_]{3,}", text)
+                tokens: list[str] = []
+                for chunk in chunks:
+                    if len(chunk) > 4 and re.fullmatch(r"[\u4e00-\u9fff]+", chunk):
+                        tokens.extend(
+                            chunk[index : index + 2] for index in range(0, len(chunk) - 1, 2)
+                        )
+                    else:
+                        tokens.append(chunk)
+                return list(dict.fromkeys(tokens))
+
+            def best_match(text: str, candidates=paragraphs):
+                tokens = important_tokens(text)
+                scored = [
+                    (sum(1 for token in tokens if token in paragraph), number, paragraph.strip())
+                    for number, paragraph in candidates
+                ]
+                best = max(scored, default=(0, "", ""), key=lambda row: row[0])
+                candidate_text = "\n".join(paragraph for _, paragraph in candidates)
+                present = text in candidate_text or (
+                    bool(tokens) and best[0] >= max(1, (len(tokens) + 1) // 2)
+                )
+                return present, best
+
             results = []
             for item in requirements:
                 requirement = str(item.get("requirement", ""))
-                chunks = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_]{3,}", requirement)
-                tokens = []
-                for chunk in chunks:
-                    if len(chunk) > 4 and re.fullmatch(r"[\u4e00-\u9fff]+", chunk):
-                        tokens.extend(chunk[index:index + 2] for index in range(0, len(chunk) - 1, 2))
-                    else:
-                        tokens.append(chunk)
-                scored = [
-                    (sum(1 for token in tokens if token in text), number, text.strip())
-                    for number, text in paragraphs
-                ]
-                best = max(scored, default=(0, "", ""), key=lambda row: row[0])
-                present = requirement in body or (bool(tokens) and best[0] >= max(1, (len(tokens) + 1) // 2))
                 constraint_type = str(item.get("constraint_type", ""))
-                passed = not present if constraint_type == "must_not_happen" else present
-                results.append({
-                    "constraint_type": constraint_type,
-                    "requirement": requirement,
-                    "passed": passed,
-                    "confidence": 0.9,
-                    "evidence": best[2][:160] if present else "",
-                    "paragraph_range": f"段落{best[1]}" if present and best[1] else "",
-                    "explanation": "Mock 语义验收与可复现规则判断一致。",
-                })
+                target = requirement.split(":", 1)[-1].strip()
+                present, best = best_match(target)
+                passed = present
+
+                if constraint_type == "must_not_happen":
+                    passed = not present
+                elif constraint_type == "ending_hook":
+                    start = max(0, int(len(paragraphs) * 0.7))
+                    present, best = best_match(target, paragraphs[start:])
+                    passed = present
+                elif constraint_type == "pov_character":
+                    character = target
+                    interior_names = re.findall(r"([\u4e00-\u9fff]{2,4})(?:心里|心想|暗自)", body)
+                    drifted = any(
+                        name != character and not name.endswith(character)
+                        for name in interior_names
+                    )
+                    passed = (
+                        (character in body or "我" in body)
+                        and "POV_VIOLATION" not in body
+                        and not drifted
+                    )
+                    present, best = best_match(character)
+                elif constraint_type in {"location", "time_context"}:
+                    passed = present
+                elif constraint_type == "character_goal":
+                    character, goal = (requirement.split(":", 1) + [""])[:2]
+                    present, best = best_match(goal.strip())
+                    action_verbs = (
+                        "尝试",
+                        "决定",
+                        "开始",
+                        "动身",
+                        "搜查",
+                        "追赶",
+                        "调查",
+                        "阻止",
+                        "保护",
+                        "行动",
+                        "失败",
+                    )
+                    passed = (
+                        character.strip() in body
+                        and present
+                        and any(verb in best[2] for verb in action_verbs)
+                    )
+                elif constraint_type == "knowledge_boundary":
+                    character = requirement.split(" ", 1)[0].strip()
+                    information = target
+                    present, best = best_match(information)
+                    knowledge_verbs = (
+                        "知道",
+                        "得知",
+                        "明白",
+                        "意识到",
+                        "认出",
+                        "想起",
+                        "想到",
+                        "说出",
+                        "断定",
+                        "确认",
+                    )
+                    violation = (
+                        character in best[2]
+                        and present
+                        and any(verb in best[2] for verb in knowledge_verbs)
+                    )
+                    if "不应知道" in requirement:
+                        passed = not violation
+                    else:
+                        contradicted = (
+                            character in best[2]
+                            and present
+                            and any(
+                                marker in best[2]
+                                for marker in ("不知道", "不记得", "遗忘", "毫不知情")
+                            )
+                        )
+                        passed = not contradicted
+                elif constraint_type == "knowledge_acquisition":
+                    character = requirement.split(" ", 1)[0].strip()
+                    information = target
+                    present, best = best_match(information)
+                    acquisition_verbs = (
+                        "发现",
+                        "看到",
+                        "听到",
+                        "听见",
+                        "读到",
+                        "收到",
+                        "调查",
+                        "推断",
+                        "告诉",
+                        "线索",
+                        "证据",
+                    )
+                    passed = (
+                        character in best[2]
+                        and present
+                        and any(verb in best[2] for verb in acquisition_verbs)
+                    )
+                elif constraint_type == "active_thread":
+                    progress_verbs = (
+                        "推进",
+                        "追查",
+                        "调查",
+                        "发现",
+                        "阻止",
+                        "决定",
+                        "延迟",
+                        "等待",
+                        "保护",
+                        "解决",
+                    )
+                    passed = present and any(verb in best[2] for verb in progress_verbs)
+                elif constraint_type == "style_requirement":
+                    violation_markers = ("STYLE_VIOLATION", "！！！！", "显然", "毫无疑问")
+                    violating = next(
+                        (
+                            (number, text.strip())
+                            for number, text in paragraphs
+                            if any(marker in text for marker in violation_markers)
+                        ),
+                        None,
+                    )
+                    passed = violating is None
+                    if violating is not None:
+                        best = (1, violating[0], violating[1])
+                        present = True
+                    elif paragraphs:
+                        best = (1, paragraphs[0][0], paragraphs[0][1].strip())
+                        present = True
+                results.append(
+                    {
+                        "constraint_type": constraint_type,
+                        "requirement": requirement,
+                        "passed": passed,
+                        "confidence": 0.9,
+                        "evidence": best[2][:160] if best[2] else "",
+                        "paragraph_range": f"段落{best[1]}" if best[1] else "",
+                        "explanation": "Mock 语义验收根据合同类型和正文证据作出确定性判断。",
+                    }
+                )
             return json.dumps(results, ensure_ascii=False)
         if "quality_scorecard_review" in prompt:
             improved = "【修订稿】" in prompt or "revise_chapter_quality" in prompt
@@ -297,10 +564,21 @@ class MockLLMClient(LLMClient):
             content_len = len(content)
 
             # Quality signal detection
-            dialogue_count = sum(content.count(q) for q in ("\"", "\"", "「", "」", "：", ":“"))
+            dialogue_count = sum(content.count(q) for q in ('"', '"', "「", "」", "：", ":“"))
             dialogue_variety = min(3.0, dialogue_count / max(content_len, 1) * 300)
 
-            conflict_keywords = ("冲突", "选择", "代价", "危险", "失败", "背叛", "秘密", "真相", "对抗", "挣扎")
+            conflict_keywords = (
+                "冲突",
+                "选择",
+                "代价",
+                "危险",
+                "失败",
+                "背叛",
+                "秘密",
+                "真相",
+                "对抗",
+                "挣扎",
+            )
             conflict_signals = sum(1 for kw in conflict_keywords if kw in content)
             conflict_bonus = min(2.0, conflict_signals * 0.4)
 
@@ -320,7 +598,9 @@ class MockLLMClient(LLMClient):
 
             # Per-dimension jitter for realistic variance
             import random as _random
-            _r = lambda scale: round(_random.uniform(-scale, scale), 2)
+
+            def _r(scale: float) -> float:
+                return round(_random.uniform(-scale, scale), 2)
 
             scores = {
                 "logic_consistency": round(base + _r(0.4), 2),
@@ -335,29 +615,35 @@ class MockLLMClient(LLMClient):
             # Build realistic issues list
             issues = []
             if conflict_signals < 3:
-                issues.append({
-                    "dimension": "逻辑",
-                    "severity": "medium",
-                    "description": "核心冲突体现不够充分，建议增强对抗或选择的戏剧张力。",
-                    "paragraph_range": "",
-                    "evidence": "",
-                })
+                issues.append(
+                    {
+                        "dimension": "逻辑",
+                        "severity": "medium",
+                        "description": "核心冲突体现不够充分，建议增强对抗或选择的戏剧张力。",
+                        "paragraph_range": "",
+                        "evidence": "",
+                    }
+                )
             if dialogue_variety < 1.0:
-                issues.append({
-                    "dimension": "节奏",
-                    "severity": "medium",
-                    "description": "对话占比偏低或对话形式单一，建议增加人物互动和潜台词。",
-                    "paragraph_range": "",
-                    "evidence": "",
-                })
+                issues.append(
+                    {
+                        "dimension": "节奏",
+                        "severity": "medium",
+                        "description": "对话占比偏低或对话形式单一，建议增加人物互动和潜台词。",
+                        "paragraph_range": "",
+                        "evidence": "",
+                    }
+                )
             if structure_bonus < 0.5:
-                issues.append({
-                    "dimension": "节奏",
-                    "severity": "low",
-                    "description": "场景分段偏少，可能缺乏节奏变化。",
-                    "paragraph_range": "",
-                    "evidence": "",
-                })
+                issues.append(
+                    {
+                        "dimension": "节奏",
+                        "severity": "low",
+                        "description": "场景分段偏少，可能缺乏节奏变化。",
+                        "paragraph_range": "",
+                        "evidence": "",
+                    }
+                )
             if improved:
                 # Revised drafts have fewer issues
                 issues = issues[:1] if base < 8.0 else []

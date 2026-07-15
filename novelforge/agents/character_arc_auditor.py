@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from novelforge.agents.base import BaseAgent
-from novelforge.core.models import (
+from novelforge.domain import (
     Character,
     CharacterContinuityIssue,
     CharacterContinuityReport,
@@ -28,13 +28,14 @@ class CharacterArcAuditorAgent(BaseAgent):
         end_chapter: int,
     ) -> CharacterContinuityReport:
         states = [
-            state for state in story.memory.states.get(character.id, [])
+            state
+            for state in story.knowledge.character_states.get(character.id, [])
             if start_chapter <= state.chapter <= end_chapter
         ]
         states.sort(key=lambda item: item.chapter)
         excerpts = []
         for chapter_index in range(start_chapter, end_chapter + 1):
-            chapter = story.content.chapters.get(chapter_index)
+            chapter = story.manuscript.chapters.get(chapter_index)
             if chapter and chapter.content:
                 excerpts.append({"chapter": chapter_index, "content": chapter.content[:3000]})
         payload = {
@@ -43,7 +44,8 @@ class CharacterArcAuditorAgent(BaseAgent):
             "chapter_range": [start_chapter, end_chapter],
             "states": [state.model_dump() for state in states],
             "confirmed_facts": [
-                fact.model_dump() for fact in story.memory.facts
+                fact.model_dump()
+                for fact in story.knowledge.character_facts
                 if fact.character_id == character.id and fact.user_confirmed
             ],
             "chapter_excerpts": excerpts,
@@ -56,7 +58,8 @@ class CharacterArcAuditorAgent(BaseAgent):
         )
         try:
             report = self._parse_model(
-                self._chat(system, json.dumps(payload, ensure_ascii=False)), CharacterContinuityReport
+                self._chat(system, json.dumps(payload, ensure_ascii=False)),
+                CharacterContinuityReport,
             )
             report.character_id = character.id
             report.character_name = character.name
@@ -87,18 +90,20 @@ class CharacterArcAuditorAgent(BaseAgent):
                     dimension = "location"
                 elif "记录" in message:
                     dimension = "knowledge"
-                issues.append(CharacterContinuityIssue(
-                    chapter_index=current.chapter,
-                    previous_chapter=previous.chapter,
-                    dimension=dimension,
-                    severity="medium",
-                    description=message,
-                    evidence=(
-                        f"第{previous.chapter}章: {previous.model_dump_json()}\n"
-                        f"第{current.chapter}章: {current.model_dump_json()}"
-                    ),
-                    suggestion="补充可见的心理、行动或信息过渡，并保持既有事实。",
-                ))
+                issues.append(
+                    CharacterContinuityIssue(
+                        chapter_index=current.chapter,
+                        previous_chapter=previous.chapter,
+                        dimension=dimension,
+                        severity="medium",
+                        description=message,
+                        evidence=(
+                            f"第{previous.chapter}章: {previous.model_dump_json()}\n"
+                            f"第{current.chapter}章: {current.model_dump_json()}"
+                        ),
+                        suggestion="补充可见的心理、行动或信息过渡，并保持既有事实。",
+                    )
+                )
         affected = sorted({issue.chapter_index for issue in issues})
         return CharacterContinuityReport(
             character_id=character.id,
@@ -111,6 +116,7 @@ class CharacterArcAuditorAgent(BaseAgent):
             passed=not issues,
             summary=(
                 "未发现基于状态记录的明显角色连续性问题。"
-                if not issues else f"发现 {len(issues)} 个需要补过渡或修订的角色连续性问题。"
+                if not issues
+                else f"发现 {len(issues)} 个需要补过渡或修订的角色连续性问题。"
             ),
         )

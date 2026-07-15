@@ -84,8 +84,8 @@ function renderOverview() {
         ["章节", `${overview.current_chapter}/${overview.total_chapters || 0}`],
         ["草稿", overview.drafted_chapters],
         ["定稿", overview.completed_chapters],
-        ["伏笔待回收", overview.foreshadowing_pending],
-        ["质量报告", overview.auto_report_count],
+        ["知识摘要", overview.summary_count],
+        ["质量报告", overview.quality_report_count],
     ];
     document.getElementById("overviewCards").innerHTML = cards.map(([label, value]) => (
         `<article class="stat-card"><div class="value">${escapeHtml(String(value))}</div><div class="label">${label}</div></article>`
@@ -138,7 +138,7 @@ function renderCharacterChart() {
         return;
     }
     const chapters = timeline.map(item => `第${item.chapter}章`);
-    const emotionLabels = unique(timeline.map(item => item.emotion || "未知"));
+    const emotionLabels = unique(timeline.map(item => item.emotional_state || "未知"));
     const locationLabels = unique(timeline.map(item => item.location || "未知"));
     characterChart.setOption({
         tooltip: {
@@ -146,7 +146,7 @@ function renderCharacterChart() {
             formatter: params => {
                 const index = params[0].dataIndex;
                 const item = timeline[index];
-                return `${chapters[index]}<br>情绪：${escapeHtml(item.emotion || "未知")}<br>位置：${escapeHtml(item.location || "未知")}`;
+                return `${chapters[index]}<br>情绪：${escapeHtml(item.emotional_state || "未知")}<br>位置：${escapeHtml(item.location || "未知")}`;
             },
         },
         grid: { left: 48, right: 48, top: 42, bottom: 40 },
@@ -161,7 +161,7 @@ function renderCharacterChart() {
                 name: "情绪",
                 type: "line",
                 smooth: true,
-                data: timeline.map(item => emotionLabels.indexOf(item.emotion || "未知")),
+                data: timeline.map(item => emotionLabels.indexOf(item.emotional_state || "未知")),
                 itemStyle: { color: palette.accent },
             },
             {
@@ -187,13 +187,12 @@ function renderPacing() {
     pacingChart.setOption({
         tooltip: { trigger: "axis" },
         grid: { left: 42, right: 36, top: 42, bottom: 42 },
-        legend: { data: ["冲突强度", "对话密度", "行动密度"], textStyle: { color: palette.muted } },
+        legend: { data: ["正文字符数", "场景数"], textStyle: { color: palette.muted } },
         xAxis: { type: "category", data: data.map(item => `第${item.chapter}章`), axisLabel: { color: palette.muted } },
         yAxis: { type: "value", axisLabel: { color: palette.muted } },
         series: [
-            { name: "冲突强度", type: "bar", data: data.map(item => item.conflict_intensity), itemStyle: { color: palette.accent } },
-            { name: "对话密度", type: "line", data: data.map(item => item.dialogue_ratio), itemStyle: { color: palette.amber } },
-            { name: "行动密度", type: "line", data: data.map(item => item.action_ratio), itemStyle: { color: palette.danger } },
+            { name: "正文字符数", type: "bar", data: data.map(item => item.character_count), itemStyle: { color: palette.accent } },
+            { name: "场景数", type: "line", data: data.map(item => item.scene_count), itemStyle: { color: palette.amber } },
         ],
     }, true);
 }
@@ -203,10 +202,10 @@ function renderQualityTrend() {
     const dom = document.getElementById("qualityChart");
     qualityChart = qualityChart || echarts.init(dom);
     if (!data.length) {
-        qualityChart.setOption(emptyChartOption("暂无自动修订评分数据"), true);
+        qualityChart.setOption(emptyChartOption("暂无生成门禁评分数据"), true);
         return;
     }
-    const labels = data.map(item => `第${item.chapter}章 R${item.round}`);
+    const labels = data.map(item => `第${item.chapter}章 A${item.attempt}`);
     qualityChart.setOption({
         tooltip: { trigger: "axis" },
         grid: { left: 42, right: 36, top: 42, bottom: 42 },

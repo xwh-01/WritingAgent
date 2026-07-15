@@ -1,151 +1,118 @@
-"""Chapter workflow endpoints."""
+"""Chapter planning, generation, review, and edit endpoints."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Query
-from fastapi.responses import PlainTextResponse
 
-from novelforge.api.schemas import ChapterContentRequest, ChapterContractRequest, ChapterResponse, ReviewResponse, ReviseRequest
-from novelforge.api.state import AUTO_REVISION_JOBS, get_engine
-from novelforge.storage.repository import StoryRepository
+from novelforge.api.schemas import (
+    ChapterContentRequest,
+    ChapterContractRequest,
+    ChapterResponse,
+    ReviewResponse,
+    RevisionRequest,
+)
+from novelforge.api.state import get_engine
 
 router = APIRouter(prefix="/chapters", tags=["chapters"])
 
 
+@router.get("/{chapter_index}/", response_model=ChapterResponse)
+def get_chapter(chapter_index: int, story_id: str = Query(...)) -> ChapterResponse:
+    chapter = get_engine(story_id).current_story.require_chapter(chapter_index)
+    return ChapterResponse(chapter=chapter)
+
+
 @router.get("/{chapter_index}/contract")
-def get_chapter_contract(chapter_index: int, story_id: str = Query(...), force: bool = Query(default=False)) -> dict:
-    """获取章节合同；不存在时根据大纲自动生成。"""
-    return get_engine(story_id).ensure_chapter_contract(chapter_index, force=force).model_dump()
+def get_contract(
+    chapter_index: int,
+    story_id: str = Query(...),
+    force: bool = Query(default=False),
+) -> dict:
+    return get_engine(story_id).ensure_chapter_contract(chapter_index, force).model_dump()
 
 
 @router.put("/{chapter_index}/contract")
-def update_chapter_contract(
+def update_contract(
     chapter_index: int,
     payload: ChapterContractRequest,
     story_id: str = Query(...),
 ) -> dict:
-    """保存用户编辑并确认的章节合同。"""
     return get_engine(story_id).update_chapter_contract(chapter_index, payload).model_dump()
-
-
-@router.get("/auto/status")
-def get_auto_status(story_id: str = Query(...), job_id: str | None = Query(default=None)) -> dict[str, object]:
-    """GET /chapters/auto/status — 查询自动修订循环的当前状态或指定任务状态。"""
-    if job_id:
-        job = AUTO_REVISION_JOBS.get(job_id)
-        return job.to_dict() if job else {"status": "not_found", "job_id": job_id}
-    return get_engine(story_id).get_auto_status()
-
-
-@router.post("/auto/stop")
-def stop_auto_revision(story_id: str = Query(...), job_id: str | None = Query(default=None)) -> dict[str, bool]:
-    """POST /chapters/auto/stop — 请求停止正在运行的自动修订任务。"""
-    engine = get_engine(story_id)
-    if job_id:
-        return {"stop_requested": AUTO_REVISION_JOBS.request_stop(job_id, engine)}
-    return {"stop_requested": engine.stop_auto_revision()}
-
-
-@router.get("/{chapter_index}/", response_model=ChapterResponse)
-def get_chapter(chapter_index: int, story_id: str = Query(...)) -> ChapterResponse:
-    """GET /chapters/{chapter_index}/ — 获取指定章节的完整信息。"""
-    engine = get_engine(story_id)
-    chapter = engine.story.content.chapters[chapter_index]
-    return ChapterResponse(chapter=chapter)
 
 
 @router.post("/{chapter_index}/beats", response_model=ChapterResponse)
 def generate_beats(chapter_index: int, story_id: str = Query(...)) -> ChapterResponse:
-    """POST /chapters/{chapter_index}/beats — 为指定章节生成场景节拍。"""
     return ChapterResponse(chapter=get_engine(story_id).generate_beats(chapter_index))
 
 
 @router.post("/{chapter_index}/write", response_model=ChapterResponse)
 def write_chapter(chapter_index: int, story_id: str = Query(...)) -> ChapterResponse:
-    """POST /chapters/{chapter_index}/write — 撰写指定章节的初稿。"""
     return ChapterResponse(chapter=get_engine(story_id).write_chapter(chapter_index))
 
 
 @router.post("/{chapter_index}/review", response_model=ReviewResponse)
 def review_chapter(chapter_index: int, story_id: str = Query(...)) -> ReviewResponse:
-    """POST /chapters/{chapter_index}/review — 对指定章节进行 AI 评审并返回报告。"""
     return ReviewResponse(report=get_engine(story_id).request_review(chapter_index))
 
 
 @router.post("/{chapter_index}/validate-contract")
-def validate_chapter_contract(chapter_index: int, story_id: str = Query(...)) -> dict:
-    """联合规则与 LLM 语义判断，逐项返回合同验收状态和原文证据。"""
+def validate_contract(chapter_index: int, story_id: str = Query(...)) -> dict:
     checks = get_engine(story_id).validate_chapter_contract(chapter_index)
     return {
-        "passed": all(check.passed and check.status == "passed" for check in checks),
-        "review_required": any(check.status == "review_required" for check in checks),
+        "passed": all(check.passed for check in checks),
         "checks": [check.model_dump() for check in checks],
     }
 
 
 @router.post("/{chapter_index}/audit")
-def audit_chapter_continuity(chapter_index: int, story_id: str = Query(...)) -> dict:
-    """POST /chapters/{chapter_index}/audit — 对指定章节进行连续性审计。"""
+def audit_continuity(chapter_index: int, story_id: str = Query(...)) -> dict:
     return get_engine(story_id).audit_chapter_continuity(chapter_index).model_dump()
 
 
-@router.put("/{chapter_index}/revise", response_model=ChapterResponse)
-def revise_chapter(chapter_index: int, payload: ReviseRequest, story_id: str = Query(...)) -> ChapterResponse:
-    """PUT /chapters/{chapter_index}/revise — 根据修订请求修订指定章节。"""
-    return ChapterResponse(chapter=get_engine(story_id).apply_revision(chapter_index, payload.revised_content))
-
-
 @router.put("/{chapter_index}/content", response_model=ChapterResponse)
-def update_chapter_content(
+def update_content(
     chapter_index: int,
     payload: ChapterContentRequest,
     story_id: str = Query(...),
 ) -> ChapterResponse:
-    """PUT /chapters/{chapter_index}/content — 直接更新章节的标题、正文和状态。"""
     chapter = get_engine(story_id).update_chapter_content(
         chapter_index,
-        content=payload.content,
-        title=payload.title,
-        status=payload.status,
+        payload.content,
+        payload.title,
+        payload.status,
     )
     return ChapterResponse(chapter=chapter)
 
 
-@router.post("/{chapter_index}/auto-write")
-def auto_write_chapter(
+@router.post("/{chapter_index}/revision-proposals")
+def create_revision_proposal(
     chapter_index: int,
+    payload: RevisionRequest,
     story_id: str = Query(...),
-    background: bool = Query(default=False),
 ) -> dict:
-    """POST /chapters/{chapter_index}/auto-write — 自动对章节执行撰写、评审、修订的完整循环，支持后台运行。"""
-    engine = get_engine(story_id)
-    if background:
-        job = AUTO_REVISION_JOBS.start(engine, story_id, chapter_index)
-        return job.to_dict()
-    result = engine.auto_write_chapter(chapter_index)
-    return result.model_dump()
+    return (
+        get_engine(story_id)
+        .create_revision_proposal(
+            chapter_index,
+            payload.instruction,
+        )
+        .model_dump()
+    )
+
+
+@router.post("/{chapter_index}/finalize", response_model=ChapterResponse)
+def finalize_chapter(chapter_index: int, story_id: str = Query(...)) -> ChapterResponse:
+    return ChapterResponse(chapter=get_engine(story_id).finalize_chapter(chapter_index))
 
 
 @router.get("/{chapter_index}/report")
-def get_auto_revision_report(chapter_index: int, story_id: str = Query(...)) -> dict:
-    """GET /chapters/{chapter_index}/report — 获取章节的自动修订测试报告（JSON 格式）。"""
-    engine = get_engine(story_id)
-    report = engine.story.quality.auto_revision_reports.get(chapter_index)
-    continuity = engine.story.quality.continuity_reports.get(chapter_index)
-    if report:
-        payload = report.model_dump()
-        payload["continuity_report"] = continuity.model_dump() if continuity else None
-        return payload
-    if continuity:
-        return {"continuity_report": continuity.model_dump()}
-    return {"error": "report_not_found"}
-
-
-@router.get("/{chapter_index}/report.md", response_class=PlainTextResponse)
-def get_auto_revision_report_markdown(chapter_index: int, story_id: str = Query(...)) -> str:
-    """GET /chapters/{chapter_index}/report.md — 获取章节的自动修订报告（Markdown 格式）。"""
-    engine = get_engine(story_id)
-    report = engine.story.quality.auto_revision_reports.get(chapter_index)
-    if report is None:
-        return "No auto-revision report found."
-    return StoryRepository().format_auto_revision_report(engine.story, report)
+def get_generation_report(chapter_index: int, story_id: str = Query(...)) -> dict:
+    story = get_engine(story_id).current_story
+    report = story.quality.generation_reports.get(chapter_index)
+    continuity = story.quality.continuity_reports.get(chapter_index)
+    review = story.quality.review_reports.get(chapter_index)
+    return {
+        "generation": report.model_dump() if report else None,
+        "continuity": continuity.model_dump() if continuity else None,
+        "review": review.model_dump() if review else None,
+    }

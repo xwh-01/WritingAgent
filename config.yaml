@@ -5,35 +5,43 @@ llm:
   max_tokens: 4096
   base_url: https://api.deepseek.com
 
-memory:
+indexes:
   vector_store: chroma
   graph_store: networkx
   text_store: sqlite_fts
-  persist_directory: ./novelforge/storage/chroma_data
-  graph_directory: ./novelforge/storage/graph_data
-  sqlite_path: ./novelforge/storage/indexes/fts.sqlite3
 
 storage:
-  database_path: ./novelforge/storage/novelforge.db
-  artifact_directory: ./novelforge/storage/artifacts
-  legacy_state_directory: ./novelforge/storage/story_state
+  database_path: ./.data/novelforge/novelforge.db
+  artifact_directory: ./.data/novelforge/artifacts
+  vector_index_directory: ./.data/novelforge/indexes/chroma
+  graph_index_directory: ./.data/novelforge/indexes/graph
+  full_text_index_path: ./.data/novelforge/indexes/fts.sqlite3
 
 story:
   default_chapters: 10
   max_context_tokens: 6000
-  history_limit: 20
   auto_polish_drafts: true
   prose_target_words: 1800
 
 logging:
   level: INFO
 
-auto_revisor:
-  max_rounds: 5
-  pass_threshold: 8.5
-  quality_weights:
-    logic_consistency: 0.25
-    character_fidelity: 0.25
-    foreshadowing_handling: 0.20
-    pacing: 0.15
-    style_uniformity: 0.15
+generation:
+  min_quality_score: 7.5
+  max_repairs: 2
+  require_contract_pass: true
+  require_continuity_pass: true
+
+retrieval:
+  type_weights:
+    foreshadowing: 6.0
+    character_state: 6.5
+    timeline_event: 4.0
+    world: 3.0
+    character: 3.0
+    chapter_summary: 2.0
+  recency_max: 5.0
+  recency_decay_base: 20.0
+  entity_match_bonus: 7.0
+  query_match_bonus_per_term: 2.0
+  query_match_max: 8.0

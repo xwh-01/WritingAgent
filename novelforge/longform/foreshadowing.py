@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import re
 from abc import ABC, abstractmethod
+from hashlib import sha1
 from uuid import uuid4
 
-from novelforge.core.models import ChapterOutline, Foreshadowing, Story
 from novelforge.core.utils import extract_json
+from novelforge.domain import ChapterOutline, Foreshadowing, Story
 from novelforge.llm.base import LLMClient
 
 
@@ -38,23 +39,23 @@ class ForeshadowingTracker(IForeshadowingTracker):
         self.llm = llm
 
     def register(self, story: Story, foreshadowing: Foreshadowing) -> Foreshadowing:
-        """注册伏笔到 story.memory.foreshadowings，若未指定 ID 则自动生成，去重后返回。"""
+        """注册伏笔到 story.knowledge.foreshadowings，若未指定 ID 则自动生成，去重后返回。"""
         if not foreshadowing.id:
             foreshadowing.id = f"fs-{uuid4().hex[:8]}"
-        if not any(item.id == foreshadowing.id for item in story.memory.foreshadowings):
-            story.memory.foreshadowings.append(foreshadowing)
+        if not any(item.id == foreshadowing.id for item in story.knowledge.foreshadowings):
+            story.knowledge.foreshadowings.append(foreshadowing)
         return foreshadowing
 
     def get_pending(self, story: Story) -> list[Foreshadowing]:
         """返回所有状态为 pending 的伏笔列表。"""
-        return [item for item in story.memory.foreshadowings if item.status == "pending"]
+        return [item for item in story.knowledge.foreshadowings if item.status == "pending"]
 
     def fulfill(self, story: Story, foreshadowing_id: str, chapter: int) -> Foreshadowing | None:
         """将指定伏笔标记为 fulfilled 并记录回收章节，返回更新后的伏笔，未找到返回 None。"""
-        for item in story.memory.foreshadowings:
+        for item in story.knowledge.foreshadowings:
             if item.id == foreshadowing_id:
                 item.status = "fulfilled"
-                item.notes = (item.notes + f"\n回收于第{chapter}章").strip()
+                item.resolved_chapter = chapter
                 return item
         return None
 
@@ -68,7 +69,9 @@ class ForeshadowingTracker(IForeshadowingTracker):
         )
         return self.llm.chat_completion([{"role": "user", "content": prompt}]).strip()
 
-    def analyze_new_chapter(self, story: Story, chapter_index: int, content: str) -> list[Foreshadowing]:
+    def analyze_new_chapter(
+        self, story: Story, chapter_index: int, content: str
+    ) -> list[Foreshadowing]:
         """分析新章节：检测新伏笔、去重注册、自动回收已触发的伏笔。返回本次注册的伏笔列表。"""
         detected = self._llm_detect(chapter_index, content) if self.llm else []
         if not detected:
@@ -104,7 +107,23 @@ class ForeshadowingTracker(IForeshadowingTracker):
     _FORESHADOW_SIGNALS: list[tuple[str, tuple[str, ...]]] = [
         ("隐藏信息", ("秘密", "隐瞒", "隐情", "不能说", "藏", "瞒", "真相", "secret", "hide")),
         ("预兆/预言", ("预言", "征兆", "预感", "梦", "预兆", "prophecy", "omen", "dream")),
-        ("特殊物品", ("钥匙", "信物", "纹章", "遗物", "戒指", "项链", "照片", "日记", "地图", "key", "artifact", "token")),
+        (
+            "特殊物品",
+            (
+                "钥匙",
+                "信物",
+                "纹章",
+                "遗物",
+                "戒指",
+                "项链",
+                "照片",
+                "日记",
+                "地图",
+                "key",
+                "artifact",
+                "token",
+            ),
+        ),
         ("未解之谜", ("奇怪", "不对劲", "似曾相识", "没有解释", "谜", "strange", "unexplained")),
         ("潜在威胁", ("威胁", "追杀", "盯上", "通缉", "埋伏", "暗处", "threat", "danger", "hunt")),
         ("未兑现承诺", ("承诺", "约定", "发誓", "誓言", "保证", "promise", "oath", "vow")),
@@ -117,7 +136,10 @@ class ForeshadowingTracker(IForeshadowingTracker):
                 continue
             return [
                 Foreshadowing(
-                    id=f"fs-{chapter_index}-{abs(hash(category + content[:30])) % 10000}",
+                    id=(
+                        f"fs-{chapter_index}-"
+                        f"{sha1((category + content[:80]).encode('utf-8')).hexdigest()[:8]}"
+                    ),
                     description=f"第{chapter_index}章出现[{category}]类线索，可能需要后续回收。",
                     created_chapter=chapter_index,
                 )
@@ -126,8 +148,17 @@ class ForeshadowingTracker(IForeshadowingTracker):
 
     # Genre-agnostic fulfilment signal words — reveal, discovery, resolution.
     _FULFIL_SIGNALS: tuple[str, ...] = (
-        "真相", "原来", "终于", "揭开", "回想", "揭露", "水落石出",
-        "reveal", "discover", "realize", "uncover",
+        "真相",
+        "原来",
+        "终于",
+        "揭开",
+        "回想",
+        "揭露",
+        "水落石出",
+        "reveal",
+        "discover",
+        "realize",
+        "uncover",
     )
 
     def _auto_fulfill(self, story: Story, chapter_index: int, content: str) -> None:
@@ -135,13 +166,18 @@ class ForeshadowingTracker(IForeshadowingTracker):
         for item in self.get_pending(story):
             if item.created_chapter == chapter_index:
                 continue
-            keywords = [word for word in re.findall(r"[\w一-鿿]{2,}", item.description) if len(word) >= 2]
-            if any(word in content for word in keywords[:3]) and any(token in content for token in self._FULFIL_SIGNALS):
+            keywords = [
+                word for word in re.findall(r"[\w一-鿿]{2,}", item.description) if len(word) >= 2
+            ]
+            if any(word in content for word in keywords[:3]) and any(
+                token in content for token in self._FULFIL_SIGNALS
+            ):
                 self.fulfill(story, item.id, chapter_index)
 
     def _is_duplicate(self, story: Story, candidate: Foreshadowing) -> bool:
         """判断候选伏笔是否与已有伏笔重复（同章节 + 同描述）。"""
         return any(
-            item.created_chapter == candidate.created_chapter and item.description == candidate.description
-            for item in story.memory.foreshadowings
+            item.created_chapter == candidate.created_chapter
+            and item.description == candidate.description
+            for item in story.knowledge.foreshadowings
         )

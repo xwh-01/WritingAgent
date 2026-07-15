@@ -15,7 +15,10 @@ htmlcov/
 venv/
 env/
 
-# Runtime storage artifacts
+# Runtime data (canonical state, derived indexes, and exports)
+.data/
+
+# Legacy runtime paths kept ignored during migration
 novelforge/storage/*.docx
 novelforge/storage/*.md
 novelforge/storage/*.db

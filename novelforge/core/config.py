@@ -1,10 +1,10 @@
-"""Configuration loader using YAML with environment overrides."""
+"""Typed configuration loaded from YAML and environment variables."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -12,87 +12,55 @@ from pydantic import BaseModel, Field
 
 
 class LLMConfig(BaseModel):
-    """LLM 提供商配置，含模型名、温度、Token 上限、API 地址及重试策略。"""
-
     provider: str = "mock"
     model: str = "deepseek-chat"
-    temperature: float = 0.8
-    max_tokens: int = 4096
+    temperature: float = Field(default=0.8, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=4096, ge=1)
     api_key: str = ""
     base_url: str = "https://api.deepseek.com"
-    timeout: float = 60.0
-    max_retries: int = 3
-    retry_backoff_seconds: float = 1.0
+    timeout: float = Field(default=60.0, gt=0)
+    max_retries: int = Field(default=3, ge=0)
+    retry_backoff_seconds: float = Field(default=1.0, ge=0.0)
 
 
-class MemoryConfig(BaseModel):
-    """记忆存储配置，指定向量库、图库、全文索引后端及持久化路径。"""
-
-    vector_store: str = "chroma"
-    graph_store: str = "networkx"
-    text_store: str = "sqlite_fts"
-    persist_directory: str = "./novelforge/storage/chroma_data"
-    graph_directory: str = "./novelforge/storage/graph_data"
-    sqlite_path: str = "./novelforge/storage/indexes/fts.sqlite3"
+class IndexBackendConfig(BaseModel):
+    vector_store: Literal["chroma", "in_memory"] = "chroma"
+    graph_store: Literal["networkx"] = "networkx"
+    text_store: Literal["sqlite_fts"] = "sqlite_fts"
 
 
 class StorageConfig(BaseModel):
-    """Canonical state and artifact paths; indexes are configured separately in MemoryConfig."""
+    """One canonical database, one artifact root, and three disposable indexes."""
 
-    database_path: str = "./novelforge/storage/novelforge.db"
-    artifact_directory: str = "./novelforge/storage/artifacts"
-    legacy_state_directory: str = "./novelforge/storage/story_state"
+    database_path: str = "./.data/novelforge/novelforge.db"
+    artifact_directory: str = "./.data/novelforge/artifacts"
+    vector_index_directory: str = "./.data/novelforge/indexes/chroma"
+    graph_index_directory: str = "./.data/novelforge/indexes/graph"
+    full_text_index_path: str = "./.data/novelforge/indexes/fts.sqlite3"
 
 
 class StoryConfig(BaseModel):
-    """故事生成相关配置，含默认章节数、上下文 Token 上限及草稿润色开关。"""
-
-    default_chapters: int = 10
-    max_context_tokens: int = 6000
-    history_limit: int = 20
+    default_chapters: int = Field(default=10, ge=1)
+    max_context_tokens: int = Field(default=6000, ge=512)
     auto_polish_drafts: bool = True
-    prose_target_words: int = 1800
+    prose_target_words: int = Field(default=1800, ge=100)
 
 
-class LoggingConfig(BaseModel):
-    """日志配置，控制日志输出级别。"""
+class GenerationConfig(BaseModel):
+    """Hard acceptance policy for machine-generated prose."""
 
-    level: str = "INFO"
-
-
-class AutoRevisorConfig(BaseModel):
-    """自动修订器配置，设定最大修订轮数、通过阈值和各项质量权重。"""
-
-    max_rounds: int = 5
-    pass_threshold: float = 8.5
-    score_samples: int = 3
-    quality_weights: dict[str, float] = Field(
-        default_factory=lambda: {
-            "logic_consistency": 0.25,
-            "character_fidelity": 0.25,
-            "foreshadowing_handling": 0.20,
-            "pacing": 0.15,
-            "style_uniformity": 0.15,
-        }
-    )
+    min_quality_score: float = Field(default=7.5, ge=0.0, le=10.0)
+    max_repairs: int = Field(default=2, ge=0, le=10)
+    require_contract_pass: bool = True
+    require_continuity_pass: bool = True
 
 
-class MemoryRankerConfig(BaseModel):
-    """记忆重排序器配置，定义各类型权重和衰减参数。
-
-    TYPE_WEIGHTS 优先级逻辑：
-    - foreshadowing (6.0): 最高——遗忘未回收伏笔导致叙事断裂的风险最大
-    - character_state (6.5): 很高——角色状态漂移是长篇写作中最常见的一致性错误
-    - causal_event (4.0): 中等——因果链断裂影响逻辑，但出现频率低
-    - world / character (3.0): 较低——这些在别处已有冗余检索
-    - chapter_summary (2.0): 最低——避免与 rolling context 重复注入
-    """
-
+class RetrievalConfig(BaseModel):
     type_weights: dict[str, float] = Field(
         default_factory=lambda: {
-            "foreshadowing": 6.0,
             "character_state": 6.5,
-            "causal_event": 4.0,
+            "foreshadowing": 6.0,
+            "timeline_event": 4.0,
             "world": 3.0,
             "character": 3.0,
             "chapter_summary": 2.0,
@@ -105,20 +73,21 @@ class MemoryRankerConfig(BaseModel):
     query_match_max: float = 8.0
 
 
-class AppConfig(BaseModel):
-    """应用总配置，聚合 LLM、记忆、故事、日志、自动修订和记忆重排序各子配置。"""
+class LoggingConfig(BaseModel):
+    level: str = "INFO"
 
+
+class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
-    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    indexes: IndexBackendConfig = Field(default_factory=IndexBackendConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     story: StoryConfig = Field(default_factory=StoryConfig)
+    generation: GenerationConfig = Field(default_factory=GenerationConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    auto_revisor: AutoRevisorConfig = Field(default_factory=AutoRevisorConfig)
-    memory_ranker: MemoryRankerConfig = Field(default_factory=MemoryRankerConfig)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """递归合并两个字典，override 中的值时覆盖 base 中同名键。"""
     result = dict(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(result.get(key), dict):
@@ -129,15 +98,14 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def load_config(config_path: str | Path | None = None) -> AppConfig:
-    """加载 YAML 配置文件并用环境变量覆盖，返回 AppConfig 实例。"""
     load_dotenv()
     path = Path(config_path or os.getenv("NOVELFORGE_CONFIG", "config.yaml"))
-    data: dict[str, Any] = {}
+    file_data: dict[str, Any] = {}
     if path.exists():
-        with path.open("r", encoding="utf-8") as file:
-            data = yaml.safe_load(file) or {}
+        with path.open("r", encoding="utf-8") as stream:
+            file_data = yaml.safe_load(stream) or {}
 
-    env_data = {
+    environment = {
         "llm": {
             "provider": os.getenv("NOVELFORGE_LLM_PROVIDER"),
             "model": os.getenv("NOVELFORGE_LLM_MODEL"),
@@ -149,22 +117,36 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
             "max_retries": os.getenv("NOVELFORGE_LLM_MAX_RETRIES"),
             "retry_backoff_seconds": os.getenv("NOVELFORGE_LLM_RETRY_BACKOFF_SECONDS"),
         },
-        "memory": {
-            "persist_directory": os.getenv("NOVELFORGE_CHROMA_DIR"),
-            "graph_directory": os.getenv("NOVELFORGE_GRAPH_DIR"),
-            "sqlite_path": os.getenv("NOVELFORGE_SQLITE_PATH"),
-        },
         "storage": {
             "database_path": os.getenv("NOVELFORGE_DATABASE_PATH"),
             "artifact_directory": os.getenv("NOVELFORGE_ARTIFACT_DIR"),
-            "legacy_state_directory": os.getenv("NOVELFORGE_LEGACY_STATE_DIR"),
+            "vector_index_directory": os.getenv("NOVELFORGE_CHROMA_DIR"),
+            "graph_index_directory": os.getenv("NOVELFORGE_GRAPH_DIR"),
+            "full_text_index_path": os.getenv("NOVELFORGE_FTS_PATH"),
+        },
+        "indexes": {
+            "vector_store": os.getenv("NOVELFORGE_VECTOR_BACKEND"),
+            "graph_store": os.getenv("NOVELFORGE_GRAPH_BACKEND"),
+            "text_store": os.getenv("NOVELFORGE_TEXT_BACKEND"),
         },
         "logging": {"level": os.getenv("NOVELFORGE_LOG_LEVEL")},
     }
     cleaned = {
-        section: {k: v for k, v in values.items() if v is not None}
-        for section, values in env_data.items()
-        if any(v is not None for v in values.values())
+        section: {key: value for key, value in values.items() if value is not None}
+        for section, values in environment.items()
+        if any(value is not None for value in values.values())
     }
-    merged = _deep_merge(data, cleaned)
-    return AppConfig.model_validate(merged)
+    return AppConfig.model_validate(_deep_merge(file_data, cleaned))
+
+
+__all__ = [
+    "AppConfig",
+    "GenerationConfig",
+    "IndexBackendConfig",
+    "LLMConfig",
+    "LoggingConfig",
+    "RetrievalConfig",
+    "StorageConfig",
+    "StoryConfig",
+    "load_config",
+]

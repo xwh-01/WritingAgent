@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from novelforge.agents.base import BaseAgent
-from novelforge.core.models import QualityReviewReport, ReviewReport
+from novelforge.domain import QualityReviewReport, ReviewReport
 
 
 class EditorAgent(BaseAgent):
@@ -91,26 +91,34 @@ class EditorAgent(BaseAgent):
         - 连续性问题：检查事实矛盾，必要时添加过渡段落
         """
         quality_issues = [
-            issue for issue in quality_report.issues
+            issue
+            for issue in quality_report.issues
             if not issue.dimension.startswith("continuity:")
         ]
         continuity_issues = [
-            issue for issue in quality_report.issues
-            if issue.dimension.startswith("continuity:")
+            issue for issue in quality_report.issues if issue.dimension.startswith("continuity:")
         ]
 
-        quality_text = "\n".join(
-            f"- [{issue.severity}] {issue.dimension}: {issue.description}"
-            + (f" (定位: {issue.paragraph_range})" if issue.paragraph_range else "")
-            + (f" 证据: {issue.evidence}" if issue.evidence else "")
-            for issue in quality_issues
-        ) if quality_issues else "无写作质量问题。"
+        quality_text = (
+            "\n".join(
+                f"- [{issue.severity}] {issue.dimension}: {issue.description}"
+                + (f" (定位: {issue.paragraph_range})" if issue.paragraph_range else "")
+                + (f" 证据: {issue.evidence}" if issue.evidence else "")
+                for issue in quality_issues
+            )
+            if quality_issues
+            else "无写作质量问题。"
+        )
 
-        continuity_text = "\n".join(
-            f"- [{issue.severity}] {issue.dimension}: {issue.description}"
-            + (f" 证据: {issue.evidence}" if issue.evidence else "")
-            for issue in continuity_issues
-        ) if continuity_issues else "无连续性问题。"
+        continuity_text = (
+            "\n".join(
+                f"- [{issue.severity}] {issue.dimension}: {issue.description}"
+                + (f" 证据: {issue.evidence}" if issue.evidence else "")
+                for issue in continuity_issues
+            )
+            if continuity_issues
+            else "无连续性问题。"
+        )
 
         system = (
             "你是负责闭环修复的小说编辑。本次修订有两类问题需要处理：\n\n"

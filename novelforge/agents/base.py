@@ -28,19 +28,13 @@ class BaseAgent:
             **kwargs,
         )
 
-    # _extract_json is kept as a thin delegation for backward-compatible subclass
-    # overrides.  New code should import extract_json from novelforge.core.utils.
-    def _extract_json(self, text: str) -> Any:
-        """从 LLM 返回文本中提取 JSON，委托给共享工具函数。"""
-        return extract_json(text)
-
     def _parse_model_list(self, text: str, model: type[TModel]) -> list[TModel]:
         """将 LLM 返回文本解析为指定 Pydantic 模型的列表。"""
-        data = self._extract_json(text)
+        data = extract_json(text)
         if not isinstance(data, list):
             raise ValueError(f"Expected a JSON list for {model.__name__}.")
         return [model.model_validate(item) for item in data]
 
     def _parse_model(self, text: str, model: type[TModel]) -> TModel:
         """将 LLM 返回文本解析为指定 Pydantic 模型的单个实例。"""
-        return model.model_validate(self._extract_json(text))
+        return model.model_validate(extract_json(text))

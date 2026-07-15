@@ -48,11 +48,16 @@ class DeepSeekClient(LLMClient):
         for attempt in range(1, self.max_retries + 1):
             try:
                 kwargs.setdefault("timeout", self.timeout)
-                response = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
+                response = self.client.chat.completions.create(
+                    model=self.model, messages=messages, **kwargs
+                )
                 return response.choices[0].message.content or ""
             except Exception as exc:
                 last_error = exc
                 if attempt >= self.max_retries:
                     break
                 time.sleep(self.retry_backoff_seconds * (2 ** (attempt - 1)))
-        raise ProviderError(f"DeepSeek provider call failed after {self.max_retries} attempts: {last_error}", attempts=self.max_retries) from last_error
+        raise ProviderError(
+            f"DeepSeek provider call failed after {self.max_retries} attempts: {last_error}",
+            attempts=self.max_retries,
+        ) from last_error

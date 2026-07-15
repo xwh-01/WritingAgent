@@ -1,31 +1,26 @@
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from novelforge.core.config import AppConfig, LLMConfig, LoggingConfig, MemoryConfig, StorageConfig, StoryConfig
+from novelforge.domain import ChapterContract, ChapterOutline, Story
 
 
-@pytest.fixture()
-def test_config(tmp_path: Path) -> AppConfig:
-    return AppConfig(
-        llm=LLMConfig(provider="mock"),
-        memory=MemoryConfig(
-            persist_directory=str(tmp_path / "chroma"),
-            graph_directory=str(tmp_path / "graph"),
-            sqlite_path=str(tmp_path / "fts.sqlite3"),
-        ),
-        storage=StorageConfig(
-            database_path=str(tmp_path / "novelforge.db"),
-            artifact_directory=str(tmp_path / "artifacts"),
-            legacy_state_directory=str(tmp_path / "legacy_story_state"),
-        ),
-        story=StoryConfig(default_chapters=3, max_context_tokens=1000),
-        logging=LoggingConfig(level="DEBUG"),
+@pytest.fixture
+def planned_story() -> Story:
+    story = Story(title="Test Story", premise="A difficult choice changes a family.")
+    story.design.outlines = [
+        ChapterOutline(
+            chapter_index=1,
+            title="The Choice",
+            summary="The protagonist must choose.",
+            conflict="Duty conflicts with loyalty.",
+            pov_character="hero",
+        )
+    ]
+    story.design.chapter_contracts[1] = ChapterContract(
+        chapter_index=1,
+        must_happen=["The protagonist makes a choice."],
+        must_not_happen=["The conflict is solved by coincidence."],
+        ending_hook="A hidden cost is revealed.",
     )
+    return story

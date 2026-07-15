@@ -1,228 +1,66 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>NovelForge 工作台</title>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="/workspace-static/workspace.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NovelForge 工作区</title>
+  <link rel="stylesheet" href="/workspace-static/workspace.css">
 </head>
-<body>
-    <div class="app-shell">
-        <aside class="sidebar">
-            <div class="brand-row">
-                <div>
-                    <div class="brand">NovelForge</div>
-                    <div class="project-meta" id="connectionState">Ready</div>
-                </div>
-                <button class="icon-button" id="refreshStoriesBtn" title="刷新故事"><i data-lucide="refresh-cw"></i></button>
-            </div>
-
-            <div class="sidebar-content">
-                <div class="sidebar-card">
-                    <div class="card-kicker">Story Setup</div>
-                    <div class="card-title">创建或选择故事</div>
-                </div>
-
-                <form class="new-story" id="newStoryForm">
-                    <input id="newTitle" name="title" placeholder="标题" autocomplete="off">
-                    <textarea id="newPremise" name="premise" placeholder="故事前提"></textarea>
-                    <div class="inline-fields">
-                        <input id="newGenre" name="genre" placeholder="类型" value="novel">
-                        <button type="submit"><i data-lucide="plus"></i><span>新建</span></button>
-                    </div>
-                </form>
-
-                <div class="section-title">故事库</div>
-                <div class="story-list" id="storyList"></div>
-
-                <div class="section-title">章节</div>
-                <div class="chapter-list" id="chapterList"></div>
-            </div>
-        </aside>
-
-        <main class="editor-pane">
-            <header class="editor-header">
-                <div>
-                    <div class="workspace-label">Novel Agent Studio</div>
-                    <div class="story-title" id="storyTitle">未选择故事</div>
-                    <div class="story-premise" id="storyPremise"></div>
-                </div>
-                <div class="toolbar">
-                    <button id="outlineBtn"><i data-lucide="list-tree"></i><span>大纲</span></button>
-                    <button id="writeBtn"><i data-lucide="pen-line"></i><span>写作</span></button>
-                    <button id="saveBtn"><i data-lucide="save"></i><span>保存</span></button>
-                    <button id="exportDocxBtn"><i data-lucide="file-down"></i><span>导出</span></button>
-                    <button id="dashboardBtn"><i data-lucide="bar-chart-3"></i><span>仪表盘</span></button>
-                </div>
-            </header>
-
-            <section class="workflow-strip">
-                <div class="workflow-step" data-workflow-step="setup">
-                    <span>01</span>
-                    <strong>故事设定</strong>
-                </div>
-                <div class="workflow-step" data-workflow-step="outline">
-                    <span>02</span>
-                    <strong>章节大纲</strong>
-                </div>
-                <div class="workflow-step active" data-workflow-step="draft">
-                    <span>03</span>
-                    <strong>正文写作</strong>
-                </div>
-                <div class="workflow-step" data-workflow-step="agent">
-                    <span>04</span>
-                    <strong>Agent Trace</strong>
-                </div>
-            </section>
-
-            <section class="next-action-card" id="nextActionCard">
-                <div>
-                    <div class="next-kicker">下一步</div>
-                    <div class="next-title">先新建或选择一个故事</div>
-                    <div class="next-meta">前置条件会在这里显示。</div>
-                </div>
-                <button type="button" id="nextActionBtn" data-guide-action="focus-premise">
-                    <i data-lucide="arrow-right"></i><span>开始</span>
-                </button>
-            </section>
-
-            <section class="outline-strip" id="outlineStrip"></section>
-
-            <section class="document-surface">
-                <input class="chapter-title-input" id="chapterTitleInput" placeholder="章节标题">
-                <textarea class="chapter-editor" id="chapterEditor" placeholder="正文"></textarea>
-            </section>
-        </main>
-
-        <aside class="agent-pane">
-            <div class="agent-header">
-                <div>
-                    <div class="section-title compact">Director Agent</div>
-                    <div class="project-meta" id="activeChapterMeta">Chapter -</div>
-                </div>
-                <button class="icon-button" id="reloadStoryBtn" title="重新加载"><i data-lucide="rotate-cw"></i></button>
-            </div>
-
-            <div class="director-box">
-                <div class="director-guide" id="directorHints">
-                    <div class="guide-kicker">演示流程</div>
-                    <div class="guide-title">先新建或选择一个故事</div>
-                    <div class="guide-meta">准备好故事后，Director Agent 会按当前状态选择下一步工具。</div>
-                </div>
-                <textarea id="directorInput" placeholder="告诉 Agent 你想做什么，例如：继续写下一章 / 检查第5章人物有没有崩 / 查看未回收伏笔"></textarea>
-                <div class="prompt-grid" aria-label="Agent 示例任务">
-                    <button type="button" class="prompt-chip" data-director-prompt="继续写下一章"><i data-lucide="pen-line"></i><span>继续写下一章</span></button>
-                    <button type="button" class="prompt-chip" data-director-prompt="检查第5章人物有没有崩"><i data-lucide="search-check"></i><span>检查第5章人设</span></button>
-                      <button type="button" class="prompt-chip" data-director-prompt="查看未回收伏笔"><i data-lucide="git-branch"></i><span>查看未回收伏笔</span></button>
-                      <button type="button" class="prompt-chip" data-director-prompt="把第3章改得更阴冷克制"><i data-lucide="sliders-horizontal"></i><span>改写第3章风格</span></button>
-                      <button type="button" class="prompt-chip" data-director-prompt="检查第1到第5章主角的人设是否一致；发现问题后生成修订候选稿"><i data-lucide="users-round"></i><span>检查人物弧线</span></button>
-                </div>
-                <div class="director-actions">
-                    <button id="directorRunBtn"><i data-lucide="sparkles"></i><span>运行 Agent</span></button>
-                    <button id="agentRunBtn" type="button"><i data-lucide="workflow"></i><span>智能运行</span></button>
-                </div>
-            </div>
-
-            <div class="status-line" id="jobStatus">Idle</div>
-
-            <div class="agent-pane-content">
-                <section class="agent-section">
-                    <h2>Agent Trace</h2>
-                    <div id="agentTrace" class="agent-trace"></div>
-                </section>
-
-                <section class="agent-section">
-                    <h2>章节合同</h2>
-                    <p class="project-meta">写作前确认不可妥协的剧情要求。</p>
-                    <div class="structured-form" id="contractForm">
-                        <div class="form-row two-columns">
-                            <label>视角人物<select id="contractPov"></select></label>
-                            <label>地点<input id="contractLocation" placeholder="例如：旧车站"></label>
-                        </div>
-                        <label>时间背景<input id="contractTime" placeholder="例如：第三天深夜"></label>
-                        <label>必须发生 <small>每行一项</small><textarea id="contractMust" rows="4"></textarea></label>
-                        <label>禁止发生 <small>每行一项</small><textarea id="contractMustNot" rows="4"></textarea></label>
-                        <label>人物目标 <small>每行“人物ID: 目标”</small><textarea id="contractGoals" rows="3"></textarea></label>
-                        <label>推进故事线 <small>每行一项</small><textarea id="contractThreads" rows="3"></textarea></label>
-                        <label>结尾钩子<input id="contractEnding" placeholder="本章最后必须留下什么"></label>
-                        <label>文风要求 <small>每行一项</small><textarea id="contractStyle" rows="3"></textarea></label>
-                        <label>备注<textarea id="contractNotes" rows="2"></textarea></label>
-                    </div>
-                    <details class="advanced-editor">
-                        <summary>高级 JSON / 知识边界</summary>
-                        <textarea id="contractEditor" rows="10"></textarea>
-                    </details>
-                    <button id="saveContractBtn" type="button"><i data-lucide="shield-check"></i><span>保存章节合同</span></button>
-                </section>
-
-                <section class="agent-section">
-                    <h2>人物事实账本</h2>
-                    <p class="project-meta">显示当前章有效事实，用户确认项优先于自动提取。</p>
-                    <div class="fact-table-wrap"><table class="fact-table">
-                        <thead><tr><th>人物</th><th>类型</th><th>值</th><th>有效期</th><th>来源</th><th></th></tr></thead>
-                        <tbody id="factLedger"></tbody>
-                    </table></div>
-                    <div class="structured-form fact-form">
-                        <div class="form-row two-columns">
-                            <label>人物<select id="factCharacter"></select></label>
-                            <label>事实类型<select id="factType">
-                                <option value="location">位置</option>
-                                <option value="life_status">生存状态</option>
-                                <option value="physical_state">身体状态</option>
-                                <option value="knowledge">已知信息</option>
-                                <option value="possession">持有物品</option>
-                                <option value="identity">身份</option>
-                                <option value="ability">能力/限制</option>
-                                <option value="affiliation">阵营</option>
-                                <option value="emotional_state">情绪</option>
-                            </select></label>
-                        </div>
-                        <label>事实值<input id="factValue" placeholder="例如：位于旧车站"></label>
-                        <div class="form-row two-columns">
-                            <label>生效章节<input id="factFrom" type="number" min="1"></label>
-                            <label>失效章节<input id="factUntil" type="number" min="1" placeholder="留空表示持续有效"></label>
-                        </div>
-                        <label>备注<input id="factNotes" placeholder="为什么需要人工纠正"></label>
-                    </div>
-                    <button id="saveFactBtn" type="button"><i data-lucide="database"></i><span>确认人物事实</span></button>
-                </section>
-
-                <section class="agent-section">
-                    <h2>上下文预览</h2>
-                    <div id="contextPreview" class="context-preview"></div>
-                </section>
-
-                <section class="agent-section compact-tools">
-                    <h2>辅助工具</h2>
-                    <div class="action-grid">
-                        <button id="beatsBtn"><i data-lucide="git-branch"></i><span>细纲</span></button>
-                        <button id="reviewBtn"><i data-lucide="search-check"></i><span>审查</span></button>
-                        <button id="autoBtn"><i data-lucide="bot"></i><span>自修</span></button>
-                        <button id="reportBtn"><i data-lucide="file-text"></i><span>报告</span></button>
-                        <button id="batchBtn"><i data-lucide="files"></i><span>批量写作</span></button>
-                    <button id="agenticRunBtn" type="button" hidden><i data-lucide="workflow"></i><span>批量编排（已弃用）</span></button>
-                    </div>
-                </section>
-
-                <section class="agent-section">
-                    <h2>项目状态</h2>
-                    <div class="metric-grid" id="longformMetrics"></div>
-                </section>
-
-                <section class="agent-section">
-                    <h2>本次结果</h2>
-                    <div id="qualityReport" class="report-block"></div>
-                </section>
-
-                <div class="event-log" id="eventLog"></div>
-            </div>
-        </aside>
+<body data-story-id="{{ story_id }}">
+  <header class="topbar">
+    <div>
+      <span class="eyebrow">NOVELFORGE</span>
+      <h1>长篇故事工作区</h1>
     </div>
+    <div class="top-actions">
+      <a href="/docs" target="_blank">API</a>
+      <a id="dashboardLink" href="/dashboard/" target="_blank">全景数据</a>
+      <button id="exportBtn" class="ghost">导出 DOCX</button>
+    </div>
+  </header>
 
-    <script>
-        window.NOVELFORGE_STORY_ID = "{{ story_id }}";
-    </script>
-    <script src="/workspace-static/workspace.js"></script>
+  <main class="layout">
+    <aside class="sidebar card">
+      <h2>项目</h2>
+      <select id="storySelect"><option value="">选择已有故事</option></select>
+      <label>标题<input id="titleInput" placeholder="故事标题"></label>
+      <label>故事前提<textarea id="premiseInput" rows="5" placeholder="核心人物、目标、阻力与代价"></textarea></label>
+      <button id="createBtn">创建故事</button>
+      <div class="divider"></div>
+      <label>章节数<input id="chapterCount" type="number" min="1" value="10"></label>
+      <button id="outlineBtn" class="secondary">生成 / 补全大纲</button>
+      <button id="batchBtn" class="ghost">从当前章批量写到末章</button>
+      <p id="status" class="status">尚未加载故事</p>
+    </aside>
+
+    <section class="center card">
+      <div class="section-head">
+        <div><span class="eyebrow">DESIGN</span><h2>章节设计</h2></div>
+        <select id="chapterSelect"><option value="">选择章节</option></select>
+      </div>
+      <div id="outlineCard" class="outline-card empty">先创建故事并生成大纲。</div>
+      <div class="button-row">
+        <button id="beatsBtn" class="secondary">规划场景</button>
+        <button id="writeBtn">可靠生成</button>
+        <button id="reviewBtn" class="secondary">评审</button>
+        <button id="finalizeBtn" class="ghost">定稿</button>
+      </div>
+      <label>章节标题<input id="chapterTitle"></label>
+      <label class="editor-label">正式正文<textarea id="chapterContent" class="editor" placeholder="只有通过门禁的生成内容，或用户明确保存的内容，才会进入这里。"></textarea></label>
+      <div class="button-row end"><button id="saveBtn" class="secondary">保存人工编辑</button></div>
+    </section>
+
+    <aside class="inspector card">
+      <div class="section-head"><div><span class="eyebrow">QUALITY</span><h2>质量与知识</h2></div></div>
+      <div class="tabs">
+        <button class="tab active" data-tab="report">质量报告</button>
+        <button class="tab" data-tab="knowledge">知识状态</button>
+        <button class="tab" data-tab="storage">存储状态</button>
+      </div>
+      <pre id="inspectorOutput">选择章节后可查看生成门禁、连续性和评审结果。</pre>
+    </aside>
+  </main>
+
+  <script src="/workspace-static/workspace.js"></script>
 </body>
 </html>
