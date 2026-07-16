@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { story: null, chapter: null, tab: "report" };
+const state = { story: null, chapter: null, tab: "report", agentRun: null };
 
 async function request(url, options = {}) {
   const response = await fetch(url, { headers: { "Content-Type": "application/json" }, ...options });
@@ -11,6 +11,16 @@ async function request(url, options = {}) {
 function setStatus(message) { $("status").textContent = message; }
 function storyId() { return state.story?.id; }
 function chapterIndex() { return Number($("chapterSelect").value); }
+
+function updateAgentApproval(payload) {
+  const steps = payload?.steps || [];
+  const toolResult = steps.at(-1)?.output_payload?.tool_result || {};
+  const proposalId = toolResult.requires_approval ? toolResult.data?.proposal_id : "";
+  [$("approveAgentBtn"), $("rejectAgentBtn")].forEach(button => {
+    button.disabled = !proposalId;
+    button.dataset.proposalId = proposalId || "";
+  });
+}
 
 async function refreshStories() {
   const { stories } = await request("/dashboard/stories");
@@ -50,11 +60,16 @@ function showChapter(index) {
 async function showInspector() {
   if (!state.story) return;
   let payload;
-  if (state.tab === "storage") payload = await request(`/stories/${storyId()}/storage`);
+  if (state.tab === "agent" && state.agentRun) {
+    payload = await request(`/stories/${storyId()}/agent-runs/${state.agentRun}`);
+  } else if (state.tab === "agent") {
+    payload = await request(`/stories/${storyId()}/agent-runs`);
+  } else if (state.tab === "storage") payload = await request(`/stories/${storyId()}/storage`);
   else if (state.tab === "knowledge") payload = state.story.knowledge;
   else if (chapterIndex()) payload = await request(`/chapters/${chapterIndex()}/report?story_id=${storyId()}`);
   else payload = { message: "请选择章节。" };
   $("inspectorOutput").textContent = JSON.stringify(payload, null, 2);
+  updateAgentApproval(state.tab === "agent" ? payload : null);
 }
 
 async function run(label, action) {
@@ -77,6 +92,41 @@ $("beatsBtn").onclick = () => run("规划场景", async () => {
 });
 $("writeBtn").onclick = () => run("可靠生成", async () => {
   await request(`/chapters/${chapterIndex()}/write?story_id=${storyId()}`, { method: "POST", body: "{}" }); await loadStory(storyId());
+});
+$("agentBtn").onclick = () => run("智能体执行", async () => {
+  const goal = $("agentGoal").value.trim();
+  if (!goal) throw new Error("请先输入智能体目标");
+  const result = await request(`/stories/${storyId()}/agent-runs`, {
+    method: "POST",
+    body: JSON.stringify({ goal, max_steps: 12 })
+  });
+  state.agentRun = result.id;
+  state.tab = "agent";
+  document.querySelectorAll(".tab").forEach(item => {
+    item.classList.toggle("active", item.dataset.tab === "agent");
+  });
+  await loadStory(storyId());
+  await showInspector();
+});
+$("approveAgentBtn").onclick = () => run("批准修订", async () => {
+  const proposalId = $("approveAgentBtn").dataset.proposalId;
+  await request(`/stories/${storyId()}/revision-proposals/${proposalId}/accept`, {
+    method: "POST", body: "{}"
+  });
+  await request(`/stories/${storyId()}/agent-runs/${state.agentRun}/resume`, {
+    method: "POST", body: JSON.stringify({ user_input: "" })
+  });
+  await loadStory(storyId()); await showInspector();
+});
+$("rejectAgentBtn").onclick = () => run("拒绝修订", async () => {
+  const proposalId = $("rejectAgentBtn").dataset.proposalId;
+  await request(`/stories/${storyId()}/revision-proposals/${proposalId}/reject`, {
+    method: "POST", body: "{}"
+  });
+  await request(`/stories/${storyId()}/agent-runs/${state.agentRun}/resume`, {
+    method: "POST", body: JSON.stringify({ user_input: "" })
+  });
+  await loadStory(storyId()); await showInspector();
 });
 $("reviewBtn").onclick = () => run("章节评审", async () => {
   await request(`/chapters/${chapterIndex()}/review?story_id=${storyId()}`, { method: "POST", body: "{}" }); await loadStory(storyId());

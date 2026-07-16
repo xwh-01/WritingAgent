@@ -1,77 +1,87 @@
 # NovelForge 架构
 
-NovelForge 的核心原则只有三条：正式正文必须经过明确的提交边界；知识必须能追溯到正文的精确版本；SQLite 是唯一事实源。
+NovelForge 是一个受约束的多智能体长篇创作系统。自主智能体负责理解目标、拆分任务、选择工具和观察结果；确定性的应用层负责事务、版本、质量门禁和正式提交。
 
-## 聚合内的五个边界
+## 总体结构
 
-`Story` 是唯一聚合根，数据按所有权拆成五块：
+```text
+用户目标
+   ↓
+StoryOrchestratorAgent
+   ├─ 生成可验证计划
+   ├─ 选择专职 Agent 工具
+   ├─ 观察结构化结果
+   ├─ 失败后有限重规划
+   └─ 等待人工批准 / 完成 / 失败
+   ↓
+StoryAgentRuntime
+   ├─ 步骤预算
+   ├─ 运行状态机
+   ├─ Run / Step / Candidate 记录
+   └─ 权限与审批边界
+   ↓
+Application Services
+   ├─ Planner / Writer / Critic / Editor
+   ├─ 契约验证与连续性审计
+   ├─ 正文提交与知识派生
+   └─ 索引投影
+   ↓
+Domain + SQLite
+```
 
-| 边界 | 类型 | 唯一职责 |
+## 三种数据生命周期
+
+| 数据 | 所有者 | 说明 |
 |---|---|---|
-| 作者意图 | `StoryDesign` | 角色设定、世界设定、大纲、章节验收契约 |
-| 正式正文 | `Manuscript` | 章节、场景计划、版本历史 |
-| 正文知识 | `StoryKnowledge` | 从正式正文派生的观察、事实、状态、事件、伏笔和摘要 |
-| 质量证据 | `StoryQuality` | 生成尝试、门禁结果、评审、连续性报告、修订提案 |
-| 操作报告 | `StoryRuns` | 批量写作结果，不参与故事事实判断 |
+| 正式事实 | `Story` | 作者设计、正式正文、正文知识、当前版本质量证据 |
+| 智能体工作 | `AgentRunRepository` | 目标、计划、步骤、候选稿、候选评审、修订提案 |
+| 检索投影 | `DerivedIndexService` | 全文、向量和图索引，可删除重建 |
 
-设计数据和派生知识不会互相覆盖。正文中出现的新角色只会成为 `CharacterObservation`；只有作者或明确的设计用例才能把它提升为 `StoryDesign.characters`。
+`Story` 不保存 Agent 运行记录或修订候选。候选内容只有通过门禁并由 `ChapterWorkflow` 提交后，才进入 `Manuscript` 并派生正式知识。
 
-## 可靠生成链路
+## 智能体循环
 
 ```text
-StoryDesign + 第 N 章之前的正式历史
-                  ↓
-             候选 Chapter
-                  ↓
-      契约校验 + 连续性审计 + 质量评分
-                  ↓
-          修复（最多 max_repairs 次）
-                  ↓
-       接受 ─────────────── 拒绝
-        ↓                    ↓
-  提交 Manuscript       只保存失败报告
-        ↓
-  原子派生 StoryKnowledge
-        ↓
-  SQLite 正式提交
-        ↓
-  重建可删除索引
+Goal
+ → Plan
+ → Select Tool
+ → Execute
+ → Observe
+ → Evaluate
+ ├─ Continue
+ ├─ Replan（最多一次）
+ ├─ Wait for approval
+ └─ Complete / Fail
 ```
 
-候选正文不在 `Manuscript` 中暂存。重写第 N 章时，`Story.generation_view(N)` 会隐藏旧的第 N 章正文、所有未来正文和相应知识，避免旧版本泄漏与自我抄写。
+Orchestrator 不能访问 Repository，只能调用工具目录中的结构化用例。每次运行有最大步骤数；模型不返回或保存隐藏思维链，只记录任务描述、工具选择、结构化观察和验收证据。
 
-## 分层与依赖方向
+## 可靠写章
 
 ```text
-API / CLI / Workspace
-        ↓
-orchestrator/engine.py      薄门面：组装依赖、转发用例
-        ↓
-application/               规划、生成、评审、修订、批量、提交协议
-        ↓
-domain/                    无基础设施依赖的业务类型和不变量
-        ↑
-agents/ + longform/         LLM 能力与确定性知识处理
-        ↓
-storage/ + indexes/         SQLite 事实源与可重建投影
+正式历史视图
+ → 场景规划
+ → Writer 候选稿
+ → 契约检查 + 连续性检查 + 质量评分
+ → 有限修复
+ → Candidate 运行存储
+ ├─ 拒绝：保留证据，不修改 Story
+ └─ 接受：正文 + 知识原子提交，Candidate 标记 committed
 ```
 
-约束：
+`Story.generation_view(N)` 隐藏旧的第 N 章正文、未来正文及相应知识，避免旧版本和未来信息污染模型。
 
-- Agent 只返回结果，不写数据库；
-- `ChapterWorkflow` 是机器生成正文进入正式稿的唯一入口；
-- `ChapterKnowledgePipeline` 是正文变成知识的唯一入口；
-- `StoryCommitCoordinator` 在保存前检查聚合一致性；
-- 索引失败不会回滚已经成功的正式提交，也不会诱导调用方重复生成。
+## 并发与一致性
 
-## 核心应用服务
+每次 Story 保存都会递增 `revision`。更新语句要求调用方持有当前 revision；旧快照保存时抛出 `ConcurrentUpdateError`，从而避免多个请求或 Agent 互相覆盖。
 
-| 服务 | 职责 |
-|---|---|
-| `StoryPlanningService` | 创建故事、大纲、契约和场景计划 |
-| `ChapterGenerationPipeline` | 候选生成、评估和有限修复，不提交 |
-| `ChapterWorkflow` | 接受候选、知识派生、正式提交 |
-| `ChapterReviewService` | 只读正文并保存质量证据 |
-| `ChapterEditingService` | 人工编辑与审批式 AI 修订 |
-| `BatchWritingService` | 顺序复用同一个单章可靠用例 |
-| `StoryStorageService` | 跨正式库、索引和制品的删除与状态查询 |
+正式 Story 与 `projection_outbox` 在同一 SQLite 事务写入。索引失败不回滚正文，事件保持 pending，之后可以重建。
+
+## 依赖规则
+
+- `domain/` 不依赖 application、storage 或 indexes；
+- Agent 负责判断与生成，不直接写数据库；
+- 工具层把 Agent 决策转换成应用用例；
+- `ChapterWorkflow` 是机器候选进入正式正文的唯一入口；
+- `ChapterKnowledgePipeline` 是正文派生知识的唯一入口；
+- 检索结果只用于定位，SQLite 正式状态决定事实。

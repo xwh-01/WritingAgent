@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterator
 from uuid import UUID
 
+from novelforge.core.exceptions import ConcurrentUpdateError
 from novelforge.domain import Story
 
 _LOCKS: dict[Path, threading.RLock] = {}
@@ -30,6 +31,7 @@ class StoryRecord:
     premise: str
     status: str
     current_chapter: int
+    revision: int
     updated_at: str
     path: str
 
@@ -62,7 +64,8 @@ class StoryRepository:
                     current_chapter INTEGER NOT NULL,
                     updated_at TEXT NOT NULL,
                     state_json TEXT NOT NULL,
-                    schema_version INTEGER NOT NULL DEFAULT 1
+                    schema_version INTEGER NOT NULL DEFAULT 2,
+                    revision INTEGER NOT NULL DEFAULT 1
                 );
                 CREATE TABLE IF NOT EXISTS projection_outbox (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,8 +79,15 @@ class StoryRepository:
                     ON stories(updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_outbox_pending
                     ON projection_outbox(processed_at, id);
-                PRAGMA user_version=1;
                 """)
+            columns = {row[1] for row in self._connection.execute("PRAGMA table_info(stories)")}
+            if "revision" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE stories ADD COLUMN revision INTEGER NOT NULL DEFAULT 1"
+                )
+            current_version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
+            if current_version < 2:
+                self._connection.execute("PRAGMA user_version=2")
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -90,34 +100,68 @@ class StoryRepository:
                 self._connection.rollback()
                 raise
 
-    def save(self, story: Story, event_type: str | None = None) -> Path:
+    def save(self, story: Story, event_type: str | None = None) -> Story:
         snapshot = story.model_copy(deep=True)
+        snapshot.assert_consistent()
         with self.transaction() as connection:
-            connection.execute(
-                """
-                INSERT INTO stories(
-                    id, title, premise, status, current_chapter,
-                    updated_at, state_json, schema_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-                ON CONFLICT(id) DO UPDATE SET
-                    title=excluded.title,
-                    premise=excluded.premise,
-                    status=excluded.status,
-                    current_chapter=excluded.current_chapter,
-                    updated_at=excluded.updated_at,
-                    state_json=excluded.state_json,
-                    schema_version=1
-                """,
-                (
-                    str(snapshot.id),
-                    snapshot.title,
-                    snapshot.premise,
-                    snapshot.status,
-                    snapshot.current_chapter,
-                    snapshot.updated_at.isoformat(),
-                    snapshot.model_dump_json(),
-                ),
-            )
+            existing = connection.execute(
+                "SELECT revision FROM stories WHERE id = ?",
+                (str(snapshot.id),),
+            ).fetchone()
+            if existing is None:
+                if snapshot.revision != 0:
+                    raise ConcurrentUpdateError(
+                        f"New story {snapshot.id} must start at revision 0, "
+                        f"got {snapshot.revision}."
+                    )
+                snapshot.revision = 1
+                connection.execute(
+                    """
+                    INSERT INTO stories(
+                        id, title, premise, status, current_chapter,
+                        updated_at, state_json, schema_version, revision
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 2, ?)
+                    """,
+                    (
+                        str(snapshot.id),
+                        snapshot.title,
+                        snapshot.premise,
+                        snapshot.status,
+                        snapshot.current_chapter,
+                        snapshot.updated_at.isoformat(),
+                        snapshot.model_dump_json(),
+                        snapshot.revision,
+                    ),
+                )
+            else:
+                current_revision = int(existing["revision"])
+                if snapshot.revision != current_revision:
+                    raise ConcurrentUpdateError(
+                        f"Story {snapshot.id} changed from revision "
+                        f"{snapshot.revision} to {current_revision}; reload before saving."
+                    )
+                snapshot.revision = current_revision + 1
+                cursor = connection.execute(
+                    """
+                    UPDATE stories SET
+                        title = ?, premise = ?, status = ?, current_chapter = ?,
+                        updated_at = ?, state_json = ?, schema_version = 2, revision = ?
+                    WHERE id = ? AND revision = ?
+                    """,
+                    (
+                        snapshot.title,
+                        snapshot.premise,
+                        snapshot.status,
+                        snapshot.current_chapter,
+                        snapshot.updated_at.isoformat(),
+                        snapshot.model_dump_json(),
+                        snapshot.revision,
+                        str(snapshot.id),
+                        current_revision,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ConcurrentUpdateError(f"Story {snapshot.id} was updated concurrently.")
             if event_type:
                 connection.execute(
                     """
@@ -126,17 +170,19 @@ class StoryRepository:
                     """,
                     (str(snapshot.id), event_type, datetime.now(timezone.utc).isoformat()),
                 )
-        return self.database_path
+        return snapshot
 
     def load(self, story_id: str | UUID) -> Story:
         with self._lock:
             row = self._connection.execute(
-                "SELECT state_json FROM stories WHERE id = ?",
+                "SELECT state_json, revision FROM stories WHERE id = ?",
                 (str(story_id),),
             ).fetchone()
         if row is None:
             raise FileNotFoundError(f"Story {story_id} is not stored in {self.database_path}.")
-        return Story.model_validate_json(row["state_json"])
+        story = Story.model_validate_json(row["state_json"])
+        story.revision = int(row["revision"])
+        return story
 
     def exists(self, story_id: str | UUID) -> bool:
         with self._lock:
@@ -157,7 +203,7 @@ class StoryRepository:
     def list_records(self) -> list[StoryRecord]:
         with self._lock:
             rows = self._connection.execute("""
-                SELECT id, title, premise, status, current_chapter, updated_at
+                SELECT id, title, premise, status, current_chapter, revision, updated_at
                 FROM stories ORDER BY updated_at DESC
                 """).fetchall()
         return [
@@ -167,6 +213,7 @@ class StoryRepository:
                 premise=row["premise"],
                 status=row["status"],
                 current_chapter=int(row["current_chapter"]),
+                revision=int(row["revision"]),
                 updated_at=row["updated_at"],
                 path=f"{self.database_path}#story={row['id']}",
             )
@@ -214,7 +261,7 @@ class StoryRepository:
         placeholders = ",".join("?" for _ in event_ids)
         with self.transaction() as connection:
             connection.execute(
-                f"UPDATE projection_outbox SET processed_at = ? " f"WHERE id IN ({placeholders})",
+                f"UPDATE projection_outbox SET processed_at = ? WHERE id IN ({placeholders})",
                 (datetime.now(timezone.utc).isoformat(), *event_ids),
             )
 

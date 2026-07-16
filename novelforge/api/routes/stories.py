@@ -8,6 +8,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from novelforge.api.schemas import (
+    AgentGoalRequest,
+    AgentResumeRequest,
     BatchWriteRequest,
     CharacterFactRequest,
     CharacterRequest,
@@ -18,7 +20,7 @@ from novelforge.api.schemas import (
     StoryResponse,
     WorldSettingRequest,
 )
-from novelforge.api.state import ENGINES, get_engine
+from novelforge.api.state import get_engine, register_engine, remove_engine
 from novelforge.orchestrator.engine import NovelForgeEngine
 
 router = APIRouter(prefix="/stories", tags=["stories"])
@@ -33,7 +35,7 @@ def create_story(payload: CreateStoryRequest) -> StoryResponse:
         genre=payload.genre,
         style_guide=payload.style_guide,
     )
-    ENGINES[str(story.id)] = engine
+    register_engine(str(story.id), engine)
     return StoryResponse(story=story)
 
 
@@ -44,10 +46,11 @@ def get_story(story_id: str) -> StoryResponse:
 
 @router.delete("/{story_id}")
 def delete_story(story_id: str) -> dict:
-    engine = ENGINES.get(story_id) or NovelForgeEngine()
-    result = engine.delete_story_data(story_id)
-    ENGINES.pop(story_id, None)
-    return result
+    engine = remove_engine(story_id) or NovelForgeEngine()
+    try:
+        return engine.delete_story_data(story_id)
+    finally:
+        engine.close()
 
 
 @router.get("/{story_id}/status", response_model=StatusResponse)
@@ -59,6 +62,7 @@ def get_status(story_id: str) -> StatusResponse:
         status=story.status,
         current_chapter=story.current_chapter,
         extra={
+            "revision": story.revision,
             "chapters": len(story.manuscript.chapters),
             "outlines": len(story.design.outlines),
         },
@@ -68,6 +72,29 @@ def get_status(story_id: str) -> StatusResponse:
 @router.get("/{story_id}/storage")
 def get_storage_status(story_id: str) -> dict:
     return get_engine(story_id).storage_status(story_id)
+
+
+@router.post("/{story_id}/agent-runs")
+def start_agent_run(story_id: str, payload: AgentGoalRequest) -> dict:
+    run = get_engine(story_id).run_agent_goal(payload.goal, payload.max_steps)
+    return run.model_dump(mode="json")
+
+
+@router.get("/{story_id}/agent-runs")
+def list_agent_runs(story_id: str, limit: int = 50) -> dict:
+    runs = get_engine(story_id).list_agent_runs(limit=max(1, min(limit, 100)))
+    return {"runs": [run.model_dump(mode="json") for run in runs]}
+
+
+@router.get("/{story_id}/agent-runs/{run_id}")
+def get_agent_run(story_id: str, run_id: str) -> dict:
+    return get_engine(story_id).get_agent_run_details(run_id)
+
+
+@router.post("/{story_id}/agent-runs/{run_id}/resume")
+def resume_agent_run(story_id: str, run_id: str, payload: AgentResumeRequest) -> dict:
+    run = get_engine(story_id).resume_agent_run(run_id, payload.user_input)
+    return run.model_dump(mode="json")
 
 
 @router.post("/{story_id}/indexes/rebuild")

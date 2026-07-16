@@ -48,6 +48,9 @@ class DerivedIndexService:
         notes = story.knowledge.retrieval_notes
         self.index_retrieval_notes(story, notes)
 
+        character_facts = story.knowledge.character_facts
+        self._index_character_facts(story_id, character_facts)
+
         characters_by_id = {
             observation.character_id: observation
             for observation in story.knowledge.character_observations
@@ -66,6 +69,7 @@ class DerivedIndexService:
             "story_id": story_id,
             "chapters": indexed_chapters,
             "retrieval_notes": len(notes),
+            "character_facts": len(character_facts),
             "characters": len(characters),
             "world_settings": len(world_settings),
         }
@@ -91,6 +95,11 @@ class DerivedIndexService:
             ],
             [self._retrieval_note_id(story_id, note.id) for note in notes],
         )
+        for note in notes:
+            self.text_store.index_document(
+                f"{story_id}:chapter:{note.chapter}:retrieval_note:{note.id}",
+                note.content,
+            )
 
     def index_chapter(self, story: Story, chapter: Chapter) -> None:
         """Replace the current full-text and summary index for a chapter."""
@@ -135,6 +144,38 @@ class DerivedIndexService:
             self.graph_store.add_node(
                 f"{story_id}:character:{self._character_id(character)}",
                 attributes,
+            )
+
+    def _index_character_facts(self, story_id: str, facts: list[Any]) -> None:
+        if not facts:
+            return
+        documents = [
+            " ".join(
+                item for item in (fact.character_id, fact.fact_type, fact.value, fact.notes) if item
+            )
+            for fact in facts
+        ]
+        ids = [f"{story_id}:character_fact:{fact.id}" for fact in facts]
+        self.vector_store.add(
+            "character_facts",
+            documents,
+            [
+                {
+                    "story_id": story_id,
+                    "type": "character_fact",
+                    "character_id": fact.character_id,
+                    "chapter": fact.source_chapter or fact.valid_from_chapter,
+                    "confirmed": fact.user_confirmed,
+                }
+                for fact in facts
+            ],
+            ids,
+        )
+        for fact, document in zip(facts, documents, strict=True):
+            chapter = fact.source_chapter or fact.valid_from_chapter
+            self.text_store.index_document(
+                f"{story_id}:chapter:{chapter}:character_fact:{fact.id}",
+                document,
             )
 
     def _index_world_settings(self, story_id: str, settings: list[Any]) -> None:

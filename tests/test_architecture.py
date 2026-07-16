@@ -27,4 +27,13 @@ def test_removed_compatibility_architecture_does_not_return() -> None:
         .read_text(encoding="utf-8")
         .splitlines()
     )
-    assert len(engine_lines) < 450
+    assert len(engine_lines) < 500
+
+
+def test_operational_agent_state_is_not_embedded_in_story() -> None:
+    story_source = (ROOT / "novelforge" / "domain" / "story.py").read_text(encoding="utf-8")
+    assert "StoryRuns" not in story_source
+    assert "runs:" not in story_source
+    assert (ROOT / "novelforge" / "storage" / "agent_runs.py").exists()
+    assert (ROOT / "novelforge" / "orchestrator" / "runtime.py").exists()
+    assert (ROOT / "novelforge" / "agents" / "story_orchestrator.py").exists()

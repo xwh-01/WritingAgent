@@ -1,5 +1,15 @@
 """Public domain vocabulary grouped by ownership boundary."""
 
+from novelforge.domain.agent_runtime import (
+    AgentRun,
+    AgentRunStatus,
+    AgentStep,
+    AgentStepStatus,
+    CandidateEvaluationRecord,
+    CandidateStatus,
+    ChapterCandidateRecord,
+)
+from novelforge.domain.batch import BatchChapterResult, BatchWriteReport
 from novelforge.domain.common import DomainModel, content_digest, utc_now
 from novelforge.domain.design import (
     ChapterContract,
@@ -55,10 +65,13 @@ from novelforge.domain.quality import (
     Severity,
     StoryQuality,
 )
-from novelforge.domain.runs import BatchChapterResult, BatchWriteReport, StoryRuns
 from novelforge.domain.story import Story, StoryStatus
 
 __all__ = [
+    "AgentRun",
+    "AgentRunStatus",
+    "AgentStep",
+    "AgentStepStatus",
     "ArcSummary",
     "BatchChapterResult",
     "BatchWriteReport",
@@ -71,6 +84,9 @@ __all__ = [
     "ChapterStatus",
     "ChapterSummary",
     "ChapterVersion",
+    "ChapterCandidateRecord",
+    "CandidateEvaluationRecord",
+    "CandidateStatus",
     "Character",
     "CharacterContinuityIssue",
     "CharacterContinuityReport",
@@ -105,7 +121,6 @@ __all__ = [
     "StoryGuide",
     "StoryKnowledge",
     "StoryQuality",
-    "StoryRuns",
     "StoryStatus",
     "TimelineEvent",
     "VolumeSummary",

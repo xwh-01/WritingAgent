@@ -26,20 +26,20 @@ class StoryCommitCoordinator:
     def save(self, story: Story) -> CommitResult:
         snapshot = story.model_copy(deep=True)
         snapshot.assert_consistent()
-        self.repository.save(snapshot)
-        return CommitResult(snapshot, None)
+        persisted = self.repository.save(snapshot)
+        return CommitResult(persisted, None)
 
     def save_and_reindex(self, story: Story, event_type: str) -> CommitResult:
         snapshot = story.model_copy(deep=True)
         snapshot.assert_consistent()
-        self.repository.save(snapshot, event_type=event_type)
+        persisted = self.repository.save(snapshot, event_type=event_type)
         try:
-            summary = self.indexes.rebuild(snapshot)
+            summary = self.indexes.rebuild(persisted)
         except Exception as exc:
-            return CommitResult(snapshot, None, str(exc))
-        event_ids = self.repository.pending_index_event_ids(snapshot.id)
+            return CommitResult(persisted, None, str(exc))
+        event_ids = self.repository.pending_index_event_ids(persisted.id)
         self.repository.mark_index_events_processed(event_ids)
-        return CommitResult(snapshot, summary)
+        return CommitResult(persisted, summary)
 
 
 __all__ = ["CommitResult", "StoryCommitCoordinator"]

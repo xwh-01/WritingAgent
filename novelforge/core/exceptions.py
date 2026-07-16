@@ -17,6 +17,10 @@ class WorkflowError(NovelForgeError):
     """Raised when a workflow transition is invalid."""
 
 
+class ConcurrentUpdateError(WorkflowError):
+    """Raised when a stale Story snapshot attempts to overwrite newer canon."""
+
+
 class GenerationRejected(WorkflowError):
     """Raised when a generated candidate exhausts repair attempts without passing gates."""
 

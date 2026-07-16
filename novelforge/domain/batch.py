@@ -1,4 +1,4 @@
-"""Operational reports which never become story facts."""
+"""Transient result types returned by sequential batch writing."""
 
 from __future__ import annotations
 
@@ -24,8 +24,4 @@ class BatchWriteReport(DomainModel):
     failed: int = 0
 
 
-class StoryRuns(DomainModel):
-    batch_reports: list[BatchWriteReport] = Field(default_factory=list)
-
-
-__all__ = ["BatchChapterResult", "BatchWriteReport", "StoryRuns"]
+__all__ = ["BatchChapterResult", "BatchWriteReport"]

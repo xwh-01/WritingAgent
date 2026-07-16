@@ -12,6 +12,7 @@ from novelforge.indexes.graph_store import NetworkXGraphStore
 from novelforge.indexes.interfaces import IFTSStore, IGraphStore, IVectorStore
 from novelforge.indexes.text_store import SQLiteFTSStore
 from novelforge.indexes.vector_store import ChromaVectorStore, InMemoryVectorStore
+from novelforge.storage.agent_runs import AgentRunRepository
 from novelforge.storage.artifacts import ArtifactStore
 from novelforge.storage.repository import StoryRepository
 
@@ -21,6 +22,7 @@ class StorageRuntime:
     """Concrete stores and the services that own cross-store behavior."""
 
     repository: StoryRepository
+    agent_runs: AgentRunRepository
     artifacts: ArtifactStore
     vector_index: IVectorStore
     graph_index: IGraphStore
@@ -37,6 +39,7 @@ def build_storage_runtime(
     """Build one internally consistent set of storage dependencies."""
     backends = backends or IndexBackendConfig()
     repository = StoryRepository(database_path=config.database_path)
+    agent_runs = AgentRunRepository(database_path=config.database_path)
     artifacts = ArtifactStore(config.artifact_directory)
     if backends.vector_store == "chroma":
         vector_index = ChromaVectorStore(config.vector_index_directory)
@@ -58,6 +61,7 @@ def build_storage_runtime(
     exports = StoryExportService(artifacts)
     storage = StoryStorageService(
         repository,
+        agent_runs,
         artifacts,
         indexes,
         vector_path=config.vector_index_directory,
@@ -66,6 +70,7 @@ def build_storage_runtime(
     )
     return StorageRuntime(
         repository=repository,
+        agent_runs=agent_runs,
         artifacts=artifacts,
         vector_index=vector_index,
         graph_index=graph_index,

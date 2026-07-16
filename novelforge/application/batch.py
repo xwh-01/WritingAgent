@@ -5,9 +5,7 @@ from __future__ import annotations
 from typing import Callable
 
 from novelforge.application.chapter_workflow import ChapterWorkflow
-from novelforge.application.commits import StoryCommitCoordinator
 from novelforge.application.planning import StoryPlanningService
-from novelforge.application.story_domains import RunService
 from novelforge.core.exceptions import GenerationRejected
 from novelforge.domain import BatchChapterResult, BatchWriteReport, Story
 
@@ -19,13 +17,9 @@ class BatchWritingService:
         self,
         planning: StoryPlanningService,
         chapters: ChapterWorkflow,
-        runs: RunService,
-        commits: StoryCommitCoordinator,
     ) -> None:
         self.planning = planning
         self.chapters = chapters
-        self.runs = runs
-        self.commits = commits
 
     def write_range(
         self,
@@ -86,11 +80,7 @@ class BatchWritingService:
                 report.failed += 1
                 break
 
-        working = current.model_copy(deep=True)
-        self.runs.add_batch_report(working, report)
-        working.touch()
-        canonical = self.commits.save(working).story
-        return canonical, report
+        return current, report
 
 
 __all__ = ["BatchWritingService"]

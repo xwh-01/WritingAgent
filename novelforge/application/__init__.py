@@ -19,7 +19,6 @@ from novelforge.application.story_domains import (
     KnowledgeService,
     ManuscriptService,
     QualityService,
-    RunService,
 )
 
 __all__ = [
@@ -36,7 +35,6 @@ __all__ = [
     "KnowledgeService",
     "ManuscriptService",
     "QualityService",
-    "RunService",
     "GenerationPolicy",
     "StoryExportService",
     "StoryPlanningService",

@@ -7,6 +7,7 @@ from uuid import UUID
 
 from novelforge.application.indexing import DerivedIndexService
 from novelforge.domain import Story
+from novelforge.storage.agent_runs import AgentRunRepository
 from novelforge.storage.artifacts import ArtifactStore
 from novelforge.storage.repository import StoryRepository
 
@@ -21,6 +22,7 @@ class StoryStorageService:
     def __init__(
         self,
         repository: StoryRepository,
+        agent_runs: AgentRunRepository,
         artifacts: ArtifactStore,
         indexes: DerivedIndexService,
         *,
@@ -29,6 +31,7 @@ class StoryStorageService:
         full_text_path: str | Path,
     ) -> None:
         self.repository = repository
+        self.agent_runs = agent_runs
         self.artifacts = artifacts
         self.indexes = indexes
         self.index_locations = {
@@ -42,6 +45,9 @@ class StoryStorageService:
         return {
             "story_id": str(story_id),
             "canonical_store": str(self.repository.database_path),
+            "agent_run_store": str(self.agent_runs.database_path),
+            "agent_runs": len(self.agent_runs.list_runs(story_id)),
+            "revision_proposals": len(self.agent_runs.list_revision_proposals(story_id)),
             "artifact_directory": str(self.artifacts.story_root(story_id)),
             "derived_indexes": dict(self.index_locations),
             "pending_index_events": self.repository.pending_index_event_count(story_id),
@@ -52,12 +58,13 @@ class StoryStorageService:
         normalized = str(story_id)
         derived = self.indexes.delete_story(normalized)
         artifacts_deleted = self.artifacts.delete_story(normalized)
+        operational_deleted = self.agent_runs.delete_story(normalized)
         canonical_deleted = self.repository.delete(normalized)
         return {
             "story_id": normalized,
-            "story_file": canonical_deleted,
             "canonical_deleted": canonical_deleted,
             "artifacts_deleted": artifacts_deleted,
+            "operational_deleted": operational_deleted,
             **derived,
         }
 

@@ -19,6 +19,7 @@ from novelforge.domain import (
     utc_now,
 )
 from novelforge.longform.knowledge_pipeline import ChapterKnowledgePipeline
+from novelforge.storage.agent_runs import AgentRunRepository
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class ChapterEditingService:
         manuscripts: ManuscriptService,
         quality: QualityService,
         commits: StoryCommitCoordinator,
+        proposals: AgentRunRepository,
     ) -> None:
         self.editor = editor
         self.generation = generation
@@ -53,6 +55,7 @@ class ChapterEditingService:
         self.manuscripts = manuscripts
         self.quality = quality
         self.commits = commits
+        self.proposals = proposals
 
     def save_user_content(
         self,
@@ -127,13 +130,8 @@ class ChapterEditingService:
             validation_report=outcome.to_report(),
             eligible=outcome.accepted,
         )
-        working = story.model_copy(deep=True)
-        self.quality.add_proposal(working, proposal)
-        working.touch()
-        canonical = self.commits.save(working).story
-        saved = self.quality.get_proposal(canonical, proposal.id)
-        assert saved is not None
-        return ProposalResult(canonical, saved)
+        saved = self.proposals.save_revision_proposal(proposal)
+        return ProposalResult(story, saved)
 
     def accept_proposal(self, story: Story, proposal_id: str) -> ChapterEditResult:
         proposal = self._pending(story, proposal_id)
@@ -145,6 +143,9 @@ class ChapterEditingService:
             )
         source = story.require_chapter(proposal.chapter_index)
         if source.version != proposal.source_version:
+            proposal.status = ProposalStatus.REJECTED
+            proposal.updated_at = utc_now()
+            self.proposals.save_revision_proposal(proposal)
             raise WorkflowError("The chapter changed after this proposal was created.")
         outline = story.get_outline(proposal.chapter_index)
         contract = story.design.chapter_contracts[proposal.chapter_index]
@@ -162,26 +163,25 @@ class ChapterEditingService:
                 report=outcome.to_report(),
                 story=story,
             )
-        working = story.model_copy(deep=True)
-        saved = self._pending(working, proposal_id)
-        saved.status = ProposalStatus.ACCEPTED
-        saved.updated_at = utc_now()
-        result = self.workflow.commit(working, outcome)
+        result = self.workflow.commit(story, outcome)
+        proposal.status = ProposalStatus.ACCEPTED
+        proposal.updated_at = utc_now()
+        self.proposals.save_revision_proposal(proposal)
         return ChapterEditResult(result.story, result.chapter)
 
     def reject_proposal(self, story: Story, proposal_id: str) -> ProposalResult:
-        working = story.model_copy(deep=True)
-        proposal = self._pending(working, proposal_id)
+        proposal = self._pending(story, proposal_id)
         proposal.status = ProposalStatus.REJECTED
         proposal.updated_at = utc_now()
-        working.touch()
-        canonical = self.commits.save(working).story
-        saved = self.quality.get_proposal(canonical, proposal_id)
-        assert saved is not None
-        return ProposalResult(canonical, saved)
+        saved = self.proposals.save_revision_proposal(proposal)
+        return ProposalResult(story, saved)
 
     def get_proposal(self, story: Story, proposal_id: str) -> RevisionProposal | None:
-        return self.quality.get_proposal(story, proposal_id)
+        try:
+            proposal = self.proposals.load_revision_proposal(proposal_id)
+        except FileNotFoundError:
+            return None
+        return proposal if proposal.story_id == str(story.id) else None
 
     def finalize(self, story: Story, chapter_index: int) -> ChapterEditResult:
         working = story.model_copy(deep=True)
@@ -195,7 +195,7 @@ class ChapterEditingService:
         return ChapterEditResult(canonical, canonical.require_chapter(chapter_index))
 
     def _pending(self, story: Story, proposal_id: str) -> RevisionProposal:
-        proposal = self.quality.get_proposal(story, proposal_id)
+        proposal = self.get_proposal(story, proposal_id)
         if proposal is None:
             raise WorkflowError(f"Revision proposal not found: {proposal_id}")
         if proposal.status is not ProposalStatus.AWAITING_APPROVAL:

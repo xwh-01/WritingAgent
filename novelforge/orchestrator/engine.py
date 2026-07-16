@@ -11,6 +11,7 @@ from novelforge.agents import (
     CriticAgent,
     EditorAgent,
     PlannerAgent,
+    StoryOrchestratorAgent,
     WriterAgent,
 )
 from novelforge.application import (
@@ -25,7 +26,6 @@ from novelforge.application import (
     KnowledgeService,
     ManuscriptService,
     QualityService,
-    RunService,
     StoryCommitCoordinator,
     StoryPlanningService,
 )
@@ -34,6 +34,7 @@ from novelforge.context.writing import WritingContextAssembler
 from novelforge.core.config import AppConfig, load_config
 from novelforge.core.exceptions import GenerationRejected
 from novelforge.domain import (
+    AgentRun,
     BatchWriteReport,
     Chapter,
     ChapterContract,
@@ -52,6 +53,8 @@ from novelforge.llm import build_llm_client
 from novelforge.longform.knowledge_pipeline import ChapterKnowledgePipeline
 from novelforge.longform.knowledge_system import StoryKnowledgeSystem
 from novelforge.orchestrator.chapter_composer import ChapterComposer
+from novelforge.orchestrator.runtime import StoryAgentRuntime
+from novelforge.orchestrator.tools import StoryAgentToolbox
 from novelforge.validation import ChapterContractValidator
 
 
@@ -64,6 +67,7 @@ class NovelForgeEngine:
 
         runtime = build_storage_runtime(self.config.storage, self.config.indexes)
         self.repository = runtime.repository
+        self.agent_run_repository = runtime.agent_runs
         self.artifact_store = runtime.artifacts
         self.vector_store = runtime.vector_index
         self.graph_store = runtime.graph_index
@@ -86,6 +90,7 @@ class NovelForgeEngine:
         )
 
         self.planner = PlannerAgent(self.llm)
+        self.story_orchestrator = StoryOrchestratorAgent(self.llm)
         self.writer = WriterAgent(self.llm)
         self.critic = CriticAgent(self.llm)
         self.editor = EditorAgent(self.llm)
@@ -102,7 +107,6 @@ class NovelForgeEngine:
         self.manuscripts = ManuscriptService()
         self.knowledge = KnowledgeService()
         self.quality = QualityService()
-        self.runs = RunService()
         self.commits = StoryCommitCoordinator(self.repository, self.index_service)
 
         policy = GenerationPolicy(
@@ -156,12 +160,17 @@ class NovelForgeEngine:
             manuscripts=self.manuscripts,
             quality=self.quality,
             commits=self.commits,
+            proposals=self.agent_run_repository,
         )
         self.batch = BatchWritingService(
             planning=self.planning,
             chapters=self.chapter_workflow,
-            runs=self.runs,
-            commits=self.commits,
+        )
+        self.agent_toolbox = StoryAgentToolbox(self)
+        self.agent_runtime = StoryAgentRuntime(
+            self.story_orchestrator,
+            self.agent_toolbox,
+            self.agent_run_repository,
         )
         self.story: Story | None = None
 
@@ -344,6 +353,19 @@ class NovelForgeEngine:
         )
         return report
 
+    def run_agent_goal(self, goal: str, max_steps: int = 12) -> AgentRun:
+        """Let the Story Orchestrator plan and execute one bounded user goal."""
+        return self.agent_runtime.start(goal, max_steps=max_steps)
+
+    def resume_agent_run(self, run_id: str, user_input: str = "") -> AgentRun:
+        return self.agent_runtime.resume(run_id, user_input=user_input)
+
+    def get_agent_run_details(self, run_id: str) -> dict[str, object]:
+        return self.agent_runtime.details(run_id)
+
+    def list_agent_runs(self, limit: int = 50) -> list[AgentRun]:
+        return self.agent_run_repository.list_runs(self._require_story().id, limit=limit)
+
     def finalize_chapter(self, chapter_index: int) -> Chapter:
         result = self.editing.finalize(self._require_story(), chapter_index)
         self.story = result.story
@@ -423,6 +445,7 @@ class NovelForgeEngine:
         if callable(close_text):
             close_text()
         self.repository.close()
+        self.agent_run_repository.close()
 
     def _polish_draft(self, story: Story, chapter_index: int, content: str) -> str:
         if not self.config.story.auto_polish_drafts:

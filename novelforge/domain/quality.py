@@ -180,7 +180,6 @@ class StoryQuality(DomainModel):
     generation_reports: dict[int, ChapterGenerationReport] = Field(default_factory=dict)
     continuity_reports: dict[int, ContinuityAuditReport] = Field(default_factory=dict)
     character_continuity_reports: list[CharacterContinuityReport] = Field(default_factory=list)
-    revision_proposals: list[RevisionProposal] = Field(default_factory=list)
 
 
 __all__ = [

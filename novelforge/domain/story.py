@@ -13,7 +13,6 @@ from novelforge.domain.design import ChapterOutline, StoryDesign
 from novelforge.domain.knowledge import StoryKnowledge
 from novelforge.domain.manuscript import Chapter, Manuscript
 from novelforge.domain.quality import StoryQuality
-from novelforge.domain.runs import StoryRuns
 
 
 class StoryStatus(StrEnum):
@@ -39,7 +38,7 @@ class Story(DomainModel):
     manuscript: Manuscript = Field(default_factory=Manuscript)
     knowledge: StoryKnowledge = Field(default_factory=StoryKnowledge)
     quality: StoryQuality = Field(default_factory=StoryQuality)
-    runs: StoryRuns = Field(default_factory=StoryRuns)
+    revision: int = Field(default=0, ge=0)
     current_chapter: int = Field(default=0, ge=0)
     status: StoryStatus = StoryStatus.PLANNING
     created_at: datetime = Field(default_factory=utc_now)
@@ -189,6 +188,5 @@ __all__ = [
     "StoryDesign",
     "StoryKnowledge",
     "StoryQuality",
-    "StoryRuns",
     "StoryStatus",
 ]

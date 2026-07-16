@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 
 import cmd2
@@ -35,8 +36,7 @@ class NovelForgeShell(cmd2.Cmd):
         """stories -- list canonical stories."""
         for record in self.engine.repository.list_records():
             self.poutput(
-                f"{record.id} | chapter {record.current_chapter} | "
-                f"{record.status} | {record.title}"
+                f"{record.id} | chapter {record.current_chapter} | {record.status} | {record.title}"
             )
 
     def do_outline(self, line: str) -> None:
@@ -55,6 +55,20 @@ class NovelForgeShell(cmd2.Cmd):
         """write <chapter> -- generate, repair, validate, and commit prose."""
         chapter = self.engine.write_chapter(int(line.strip()))
         self.poutput(f"Committed {chapter.title} v{chapter.version}")
+
+    def do_agent(self, line: str) -> None:
+        """agent <goal> -- let the Story Orchestrator plan and execute a goal."""
+        goal = line.strip()
+        if not goal:
+            self.perror("Usage: agent <goal>")
+            return
+        run = self.engine.run_agent_goal(goal)
+        self.poutput(run.model_dump_json(indent=2))
+
+    def do_run(self, line: str) -> None:
+        """run <run_id> -- inspect a persisted Agent run and all steps."""
+        details = self.engine.get_agent_run_details(line.strip())
+        self.poutput(json.dumps(details, ensure_ascii=False, indent=2))
 
     def do_review(self, line: str) -> None:
         """review <chapter> -- persist an editorial review."""

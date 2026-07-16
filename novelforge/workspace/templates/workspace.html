@@ -30,6 +30,14 @@
       <label>章节数<input id="chapterCount" type="number" min="1" value="10"></label>
       <button id="outlineBtn" class="secondary">生成 / 补全大纲</button>
       <button id="batchBtn" class="ghost">从当前章批量写到末章</button>
+      <div class="divider"></div>
+      <span class="eyebrow">STORY AGENT</span>
+      <label>智能体目标<textarea id="agentGoal" rows="4" placeholder="例如：继续写第 3 章，并确保主角不能提前知道凶手身份"></textarea></label>
+      <button id="agentBtn">交给智能体</button>
+      <div class="button-row agent-approval">
+        <button id="approveAgentBtn" class="secondary" disabled>批准提案</button>
+        <button id="rejectAgentBtn" class="ghost" disabled>拒绝提案</button>
+      </div>
       <p id="status" class="status">尚未加载故事</p>
     </aside>
 
@@ -56,6 +64,7 @@
         <button class="tab active" data-tab="report">质量报告</button>
         <button class="tab" data-tab="knowledge">知识状态</button>
         <button class="tab" data-tab="storage">存储状态</button>
+        <button class="tab" data-tab="agent">智能体运行</button>
       </div>
       <pre id="inspectorOutput">选择章节后可查看生成门禁、连续性和评审结果。</pre>
     </aside>

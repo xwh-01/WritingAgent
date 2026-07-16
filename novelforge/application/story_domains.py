@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from novelforge.domain import (
-    BatchWriteReport,
     Chapter,
     ChapterContract,
     ChapterGenerationReport,
@@ -14,13 +13,10 @@ from novelforge.domain import (
     CharacterFact,
     CharacterState,
     ContinuityAuditReport,
-    ProposalStatus,
     RetrievalNote,
     ReviewReport,
-    RevisionProposal,
     Story,
     WorldSetting,
-    utc_now,
 )
 
 
@@ -151,17 +147,10 @@ class QualityService:
         story.quality.review_reports[chapter_index] = report
 
     def invalidate_chapter_assessments(self, story: Story, chapter_index: int) -> None:
-        """Remove reports tied to old prose and close stale pending proposals."""
+        """Remove canonical quality evidence tied to old prose."""
         story.quality.review_reports.pop(chapter_index, None)
         story.quality.continuity_reports.pop(chapter_index, None)
         story.quality.generation_reports.pop(chapter_index, None)
-        for proposal in story.quality.revision_proposals:
-            if (
-                proposal.chapter_index == chapter_index
-                and proposal.status is ProposalStatus.AWAITING_APPROVAL
-            ):
-                proposal.status = ProposalStatus.REJECTED
-                proposal.updated_at = utc_now()
 
     def invalidate_story_assessments(self, story: Story) -> None:
         """Invalidate quality evidence after author-controlled canon changes."""
@@ -169,10 +158,6 @@ class QualityService:
         story.quality.continuity_reports.clear()
         story.quality.generation_reports.clear()
         story.quality.character_continuity_reports.clear()
-        for proposal in story.quality.revision_proposals:
-            if proposal.status is ProposalStatus.AWAITING_APPROVAL:
-                proposal.status = ProposalStatus.REJECTED
-                proposal.updated_at = utc_now()
 
     def save_generation_report(
         self,
@@ -199,20 +184,3 @@ class QualityService:
             )
         ]
         story.quality.character_continuity_reports.append(report)
-
-    def add_proposal(self, story: Story, proposal: RevisionProposal) -> RevisionProposal:
-        story.quality.revision_proposals.append(proposal)
-        return proposal
-
-    def get_proposal(self, story: Story, proposal_id: str) -> RevisionProposal | None:
-        return next(
-            (item for item in story.quality.revision_proposals if item.id == proposal_id), None
-        )
-
-
-class RunService:
-    """Own persistent reports for multi-chapter operations."""
-
-    def add_batch_report(self, story: Story, report: BatchWriteReport) -> BatchWriteReport:
-        story.runs.batch_reports.append(report)
-        return report

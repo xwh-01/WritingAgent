@@ -33,6 +33,15 @@ class BatchWriteRequest(BaseModel):
     end_chapter: int = Field(ge=1)
 
 
+class AgentGoalRequest(BaseModel):
+    goal: str = Field(min_length=1)
+    max_steps: int = Field(default=12, ge=1, le=100)
+
+
+class AgentResumeRequest(BaseModel):
+    user_input: str = ""
+
+
 class RevisionRequest(BaseModel):
     instruction: str = Field(min_length=1)
 
@@ -84,6 +93,8 @@ class StatusResponse(BaseModel):
 
 
 __all__ = [
+    "AgentGoalRequest",
+    "AgentResumeRequest",
     "BatchWriteRequest",
     "ChapterContentRequest",
     "ChapterContractRequest",
