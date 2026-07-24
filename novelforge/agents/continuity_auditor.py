@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from novelforge.agents.base import BaseAgent
-from novelforge.domain import ChapterOutline, ContinuityAuditReport, ContinuityIssue, Story
+from novelforge.domain import Chapter, ChapterOutline, ContinuityAuditReport, ContinuityIssue, Story
 
 
 class ContinuityAuditorAgent(BaseAgent):
@@ -44,7 +44,7 @@ class ContinuityAuditorAgent(BaseAgent):
             f"content={content[:12000]}"
         )
         try:
-            report = self._parse_model(self._chat(system, user), ContinuityAuditReport)
+            report = self._chat_model(system, user, ContinuityAuditReport)
             report.chapter_index = chapter_index
             report.risk_score = self._clamp(report.risk_score)
             report.passed = report.risk_score < 7.0 and not any(
@@ -55,6 +55,57 @@ class ContinuityAuditorAgent(BaseAgent):
         except Exception:
             report = self._rule_audit(story, chapter_index, content, outline)
             report.audit_method = "rule_fallback"
+            return report
+
+    def audit_local_patch(
+        self,
+        story: Story,
+        candidate: Chapter,
+        changed_scene_indexes: list[int],
+        longform_context: str = "",
+    ) -> ContinuityAuditReport:
+        """Audit only a changed scene and its hand-off neighbours after a patch.
+
+        Full chapter review is intentionally avoided here: the unchanged scenes
+        were already reviewed, while the mutation boundaries are where state,
+        knowledge, location, and temporal regressions can be introduced.
+        """
+        changed = sorted(set(changed_scene_indexes))
+        window = {
+            scene.scene_index
+            for scene in candidate.beats
+            if any(abs(scene.scene_index - item) <= 1 for item in changed)
+        }
+        scenes = [item for item in sorted(candidate.beats, key=lambda item: item.scene_index) if item.scene_index in window]
+        content = "\n\n--- scene boundary ---\n\n".join(
+            f"[scene {item.scene_index}; changed={item.scene_index in changed}; end_state={json.dumps(item.end_state, ensure_ascii=False)}]\n{item.content}"
+            for item in scenes
+        )
+        system = (
+            "You are a local continuity auditor for a patched novel scene. Check only the changed scene and "
+            "its neighbours for direct contradictions in state hand-off, character knowledge, location, time, "
+            "items, decisions, promises, and chapter facts. Return strict ContinuityAuditReport JSON. Mark a "
+            "high issue only when you can cite a direct contradiction."
+        )
+        user = (
+            "continuity_patch_audit\n"
+            f"chapter={candidate.index}\nchanged_scenes={changed}\n"
+            f"story_bible={story.knowledge.guide.model_dump_json()}\n"
+            f"longform_context={longform_context[:3500]}\n"
+            f"scene_window={content[:12000]}"
+        )
+        try:
+            report = self._chat_model(system, user, ContinuityAuditReport, temperature=0.1, max_tokens=1000)
+            report.chapter_index = candidate.index
+            report.risk_score = self._clamp(report.risk_score)
+            report.passed = report.risk_score < 7.0 and not any(
+                issue.severity == "high" for issue in report.issues
+            )
+            report.audit_method = "local_patch"
+            return report
+        except Exception:
+            report = self._rule_audit(story, candidate.index, content, None)
+            report.audit_method = "local_patch_rule_fallback"
             return report
 
     def _rule_audit(

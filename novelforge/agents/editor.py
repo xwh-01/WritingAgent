@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from novelforge.agents.base import BaseAgent
-from novelforge.domain import QualityReviewReport, ReviewReport
+from novelforge.domain import Beat, QualityReviewReport, ReviewReport, ScenePatch
 
 
 class EditorAgent(BaseAgent):
@@ -77,6 +77,143 @@ class EditorAgent(BaseAgent):
             "只输出修订后全文。"
         )
         return self._chat(system, user).strip()
+
+    def revise_scene_from_contract_evidence(
+        self,
+        scene_content: str,
+        obligations: list[dict],
+        failed_evidence: list[dict],
+        style_guide: str = "",
+    ) -> str:
+        """Repair only one failing scene and preserve every unrelated scene verbatim."""
+        system = (
+            "You repair one novel scene against a chapter contract. Return only the revised scene prose. "
+            "Change only what is necessary to satisfy the listed failed obligations. Preserve events, voice, "
+            "character knowledge, and all text not needed for that repair. Do not add future-scene events."
+        )
+        user = (
+            "scene_contract_repair\n"
+            f"scene_obligations={json.dumps(obligations, ensure_ascii=False)}\n"
+            f"failed_evidence={json.dumps(failed_evidence, ensure_ascii=False)}\n"
+            f"style_guide={style_guide}\n"
+            f"scene_content={scene_content}\n"
+            "Output only the repaired scene prose."
+        )
+        return self._chat(system, user).strip()
+
+    def revise_scene_patch_from_contract_evidence(
+        self,
+        scene: Beat,
+        failed_evidence: list[dict],
+        style_guide: str = "",
+    ) -> ScenePatch | None:
+        """Repair one scene as a self-contained prose-and-state transaction."""
+        system = (
+            "You repair one novel scene against its assigned chapter-contract obligations. Return one strict "
+            "ScenePatch JSON object. Change only what is necessary to satisfy the cited failures and preserve "
+            "events, voice, character knowledge, and every unrelated sentence. The ending_state must describe "
+            "only facts explicit in the revised prose, so the next scene can safely consume it. Do not add "
+            "future-scene events."
+        )
+        user = (
+            "scene_contract_repair_patch\n"
+            f"scene={json.dumps(scene.model_dump(), ensure_ascii=False)}\n"
+            f"failed_evidence={json.dumps(failed_evidence, ensure_ascii=False)}\n"
+            f"style_guide={style_guide}\n"
+            "Output only JSON with scene_index, content, ending_state, and reason."
+        )
+        try:
+            patch = self._chat_model(system, user, ScenePatch, temperature=0.1, max_tokens=1800)
+        except Exception:
+            return None
+        if patch.scene_index != scene.scene_index or not patch.content.strip():
+            return None
+        if patch.content.strip() == scene.content.strip():
+            return None
+        return patch
+
+    def revise_scenes_from_quality_report(
+        self,
+        scenes: list[Beat],
+        quality_report: QualityReviewReport,
+        style_guide: str = "",
+    ) -> list[ScenePatch]:
+        """Return precise scene patches rather than an untraceable chapter rewrite."""
+        if not scenes:
+            return []
+        scene_payload = [
+            {
+                "scene_index": item.scene_index,
+                "brief": item.model_dump(exclude={"content", "end_state"}),
+                "content": item.content,
+            }
+            for item in scenes
+        ]
+        system = (
+            "You are a precise fiction editor. Revise only the supplied scenes to address the cited quality "
+            "issues. Return a JSON array of ScenePatch objects. Each patch must preserve all contract events, "
+            "facts, character knowledge, and scene boundaries. Do not return a patch for an unchanged scene, "
+            "and never add scenes or alter any scene_index not supplied."
+        )
+        user = (
+            "scene_quality_patch\n"
+            f"quality_report={json.dumps(quality_report.model_dump(), ensure_ascii=False)}\n"
+            f"style_guide={style_guide}\n"
+            f"scenes={json.dumps(scene_payload, ensure_ascii=False)}\n"
+            "Output only a JSON array. Every item needs scene_index, complete revised content, and a concise reason."
+        )
+        try:
+            patches = self._chat_model_list(system, user, ScenePatch, temperature=0.2, max_tokens=1800)
+        except Exception:
+            return []
+        allowed = {item.scene_index: item.content.strip() for item in scenes}
+        return [
+            item
+            for item in patches
+            if item.scene_index in allowed and item.content.strip() and item.content.strip() != allowed[item.scene_index]
+        ]
+
+    def revise_scenes_from_review_report(
+        self,
+        scenes: list[Beat],
+        review_report: ReviewReport,
+        style_guide: str = "",
+        revision_instruction: str = "",
+    ) -> list[ScenePatch]:
+        """Create approval-gated revisions as traceable scene patches."""
+        if not scenes:
+            return []
+        scene_payload = [
+            {
+                "scene_index": item.scene_index,
+                "brief": item.model_dump(exclude={"content", "end_state"}),
+                "content": item.content,
+            }
+            for item in scenes
+        ]
+        system = (
+            "You are a precise fiction editor. Apply the requested revision only to the supplied scenes. "
+            "Return a JSON array of ScenePatch objects. Preserve every hard contract event, established fact, "
+            "knowledge boundary, and scene boundary. Never emit an unchanged scene or an unknown scene_index."
+        )
+        user = (
+            "scene_revision_proposal\n"
+            f"revision_instruction={revision_instruction}\n"
+            f"review_report={json.dumps(review_report.model_dump(), ensure_ascii=False)}\n"
+            f"style_guide={style_guide}\n"
+            f"scenes={json.dumps(scene_payload, ensure_ascii=False)}\n"
+            "Output only a JSON array. Every item needs scene_index, complete revised content, and a concise reason."
+        )
+        try:
+            patches = self._chat_model_list(system, user, ScenePatch, temperature=0.2, max_tokens=1800)
+        except Exception:
+            return []
+        allowed = {item.scene_index: item.content.strip() for item in scenes}
+        return [
+            item
+            for item in patches
+            if item.scene_index in allowed and item.content.strip() and item.content.strip() != allowed[item.scene_index]
+        ]
 
     def _revise_with_continuity(
         self,

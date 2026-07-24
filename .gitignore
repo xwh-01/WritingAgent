@@ -35,6 +35,7 @@ novelforge/storage/story_state/*
 
 # Generated eval reports
 evals/report.json
+evals/live_results/
 
 # Logs and local databases
 *.log

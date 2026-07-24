@@ -166,6 +166,10 @@ class DerivedIndexService:
                     "character_id": fact.character_id,
                     "chapter": fact.source_chapter or fact.valid_from_chapter,
                     "confirmed": fact.user_confirmed,
+                    "valid_from_chapter": fact.valid_from_chapter,
+                    # Chroma metadata does not accept null values. Zero means
+                    # the fact remains valid until explicitly superseded.
+                    "valid_until_chapter": fact.valid_until_chapter or 0,
                 }
                 for fact in facts
             ],

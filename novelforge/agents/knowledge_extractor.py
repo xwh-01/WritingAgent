@@ -368,7 +368,7 @@ class KnowledgeExtractorAgent(BaseAgent):
             f"content={content[:12000]}"
         )
         try:
-            return self._parse_model(self._chat(system, user), ChapterKnowledgeExtraction)
+            return self._chat_model(system, user, ChapterKnowledgeExtraction)
         except Exception:
             return self._rule_extract(story, chapter_index, content)
 

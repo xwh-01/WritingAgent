@@ -32,15 +32,25 @@ def extract_json(text: str) -> Any:
     if fenced:
         text = fenced.group(1).strip()
     # 2. Direct parse
+    direct_error: json.JSONDecodeError | None = None
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    # 3. Regex fallback — find first JSON-like structure
-    match = re.search(r"(\[.*\]|\{.*\})", text, re.DOTALL)
-    if not match:
-        raise
-    return json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        direct_error = exc
+    # 3. Scan for the first independently valid JSON value. A greedy regular
+    # expression treats a valid object followed by model commentary or another
+    # object as one invalid blob, which used to make otherwise recoverable LLM
+    # responses fail with JSONDecodeError.
+    decoder = json.JSONDecoder()
+    for offset, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[offset:])
+            return value
+        except json.JSONDecodeError:
+            continue
+    raise direct_error or ValueError("No JSON value found in response.")
 
 
 # ---------------------------------------------------------------------------

@@ -57,8 +57,9 @@ class CharacterArcAuditorAgent(BaseAgent):
             "for a contradiction when a transition is present. Return strict CharacterContinuityReport JSON."
         )
         try:
-            report = self._parse_model(
-                self._chat(system, json.dumps(payload, ensure_ascii=False)),
+            report = self._chat_model(
+                system,
+                json.dumps(payload, ensure_ascii=False),
                 CharacterContinuityReport,
             )
             report.character_id = character.id

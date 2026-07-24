@@ -20,6 +20,8 @@ def build_llm_client(config: LLMConfig) -> LLMClient:
             timeout=config.timeout,
             max_retries=config.max_retries,
             retry_backoff_seconds=config.retry_backoff_seconds,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
         )
     if provider in {"mock", "local", "fake"}:
         return MockLLMClient()

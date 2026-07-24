@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 
 from novelforge.agents.base import BaseAgent
+from novelforge.core.utils import extract_json
 from novelforge.domain import Beat, ChapterContract, ChapterOutline, SceneDraft, SceneEndState
 
 
@@ -24,51 +26,303 @@ class WriterAgent(BaseAgent):
         style_requirements: str,
         forbidden_actions: list[str],
         transition_constraints: list[str] | None = None,
+        scene_context: str = "",
+        scene_obligations: list[dict] | None = None,
+        previous_scene_obligations: list[dict] | None = None,
+        temperature: float | None = None,
+        variant_focus: str = "",
     ) -> SceneDraft:
         """Write one scene and return prose plus its structured continuity hand-off."""
+        exclusions = [
+            str(item.get("requirement", "")).strip()
+            for item in (scene_obligations or [])
+            if item.get("mode") == "must_exclude" and str(item.get("requirement", "")).strip()
+        ]
+        executable_obligations = [
+            item for item in (scene_obligations or []) if item.get("mode") != "must_exclude"
+        ]
+        execution_checklist = [
+            {
+                "id": str(item.get("id", "")),
+                "mode": str(item.get("mode", "must_include")),
+                "requirement": str(item.get("requirement", "")).strip(),
+            }
+            for item in executable_obligations
+            if str(item.get("requirement", "")).strip()
+        ]
+        previous_requirements = [
+            str(item.get("requirement", "")).strip()
+            for item in (previous_scene_obligations or [])
+            if str(item.get("requirement", "")).strip()
+        ]
+        negative_conditions = [
+            requirement
+            for requirement in contract.must_happen
+            if any(marker in requirement for marker in ("没有", "不得", "不能", "未"))
+        ]
+        unresolved_choice_exclusions = [
+            item
+            for item in exclusions
+            if any(marker in item for marker in ("最终决定", "明确选择", "播出或封存"))
+        ]
         system = (
-            self._build_writer_system_prompt(style_requirements)
-            + "\n你当前只写一个场景。严格输出 JSON 对象，顶层仅含 content 和 ending_state。"
-            "content 是小说正文；ending_state 是结构化对象，必须包含 characters_present,"
-            "character_state_changes,relationship_changes,location_changes,time_changes,"
-            "knowledge_gained,items_gained,items_lost,injuries_or_conditions,decisions,promises,"
-            "questions_created,questions_resolved,ending_state。不得使用字符串切割边界。"
+            "你是长篇小说作者，只写当前场景。以动作、环境和对话推进冲突；人物必须做选择并付出"
+            "可见代价。不要解释创作思路、不要提前写未来场景、不要重复上一场已完成的事件。"
+            "不得凭空新增有名字的人物、地点、组织、历史事件、魔法规则、物件机制、数值期限或角色背景；"
+            "只有 SCENE_BRIEF、场景上下文、前序状态和合同义务中明示的事实才能写成确定事实。"
+            "优先输出 JSON 对象 {content, ending_state}；若无法稳定输出 JSON，只输出完整场景正文。"
         )
+        if exclusions:
+            system += (
+                "\nHARD_EXCLUSIONS: "
+                + json.dumps(exclusions, ensure_ascii=False)
+                + "。绝不能把禁项本身写成已经发生的行动、结果或事实。"
+                "只有当禁项明确禁止意图、准备、提议、命令、威胁或暗示时，才禁止那些前置行为；"
+                "否则必须区分实际完成的行为与尚未执行的准备。若本场结尾义务明确要求出现未启用的工具、"
+                "停住的动作或犹豫，应保留该义务而不能误写成禁项已经发生。"
+            )
+            if any("全部细节" in item or "全貌" in item for item in exclusions):
+                system += (
+                    " 若禁项禁止披露‘全部细节’或‘全貌’，正文只能提及线索名称；"
+                    "不得引用原文、条款、数字、日期、住址、当事人、任务内容或报告正文。"
+                )
+        if negative_conditions:
+            system += (
+                "\nNEGATIVE_CONDITIONS: "
+                + json.dumps(negative_conditions, ensure_ascii=False)
+                + "。这些是必需事件中的否定部分，必须原样保持；不能把‘没有/不得/不能/未’写成相反结果。"
+            )
+        if execution_checklist:
+            system += (
+                "\nCONTRACT_EXECUTION_CHECKLIST: "
+                + json.dumps(execution_checklist, ensure_ascii=False)
+                + "。这是本场景离开前必须逐条完成的硬性清单。每一项都要在正文中留下可独立引用的"
+                "人物、动作、对象或可见结果证据；不得只写提纲、意图或模糊同义暗示。"
+                "写完后自行逐项核对，再输出正文；不要在正文中展示这份清单或解释核对过程。"
+                " 每条义务中的命名人物、关键物件、目的地/记录载体和不可逆动作都是合同锚点："
+                "正文必须至少明确写出一次，不能只用‘他’、‘窗口’、‘装置’等泛称替代，也不能把因果结果"
+                "写成尚未发生的意图。"
+            )
+        if unresolved_choice_exclusions:
+            system += (
+                "\nUNRESOLVED_CHOICE_GUARD: "
+                + json.dumps(unresolved_choice_exclusions, ensure_ascii=False)
+                + "。这些禁项要求人物尚未作出最终选择。只能写身体停顿、未解压力或仍在权衡的选项；"
+                "不得写‘决定/选择/放弃/封存/播出/不按下/不再’或任何表明已选定一边的结论。"
+            )
+        if variant_focus.strip():
+            system += (
+                "\nVARIANT_FOCUS: "
+                + variant_focus.strip()
+                + "。这是质量探索，不得改变已给定事实、人物选择、合同义务或知识边界。"
+            )
         requirements = [
-            "人物有明确目标并遭遇实际阻碍",
-            "人物主动选择且选择产生具体结果",
-            "结尾必须发生可传递的状态变化",
-            "对话只用于冲突、信息推进或人物塑造，并穿插动作",
-            "通过动作、环境和对话呈现剧情，不把计划扩写成总结",
-            "不重复已知信息，不越过人物知识边界，不新增重大长期设定",
-            "不使用模板化结尾",
+            "写出目标、实际阻碍、人物选择和可见结果",
+            "用动作、环境和必要对话呈现，不写提纲或创作解释",
+            "不重复已知信息、不越过知识边界、不新增重大设定",
+            "结尾形成可传递变化，避免模板化收束",
         ]
         user = "\n\n".join(
             [
                 f"STORY_PREMISE\n{story_premise}",
-                f"CHAPTER_CONTRACT\n{json.dumps(contract.model_dump(), ensure_ascii=False)}",
-                f"CURRENT_SCENE\n{json.dumps(scene.model_dump(exclude={'content', 'status'}), ensure_ascii=False)}",
+                "SCENE_BRIEF\n"
+                + json.dumps(
+                    {
+                        "index": scene.scene_index,
+                        "title": scene.title,
+                        "purpose": scene.purpose or scene.goal,
+                        "pov": scene.pov_character or contract.pov_character,
+                        "location": scene.location or contract.location,
+                        "time": scene.time_context or contract.time_context,
+                        "characters": scene.participating_characters,
+                        "goal": scene.character_goals or scene.goal,
+                        "obstacle": scene.obstacle or scene.conflict,
+                        "outcome": scene.outcome,
+                        "target_length": scene.target_length,
+                    },
+                    ensure_ascii=False,
+                ),
                 "PREVIOUS_SCENE_END_STATE\n"
                 + json.dumps(
                     previous_scene_end_state.model_dump() if previous_scene_end_state else {},
                     ensure_ascii=False,
                 ),
-                f"CHARACTER_STATES\n{json.dumps(character_states, ensure_ascii=False, default=str)}",
-                f"STYLE_REQUIREMENTS\n{style_requirements}",
+                f"CHARACTER_STATES\n{json.dumps(character_states, ensure_ascii=False, default=str)[:1800]}",
+                "SCENE_CANONICAL_CONTEXT\n"
+                + (scene_context or "本场景没有额外检索事实。"),
+                "SCENE_CONTRACT_OBLIGATIONS\n"
+                + json.dumps(
+                    [item["requirement"] for item in execution_checklist], ensure_ascii=False
+                )
+                + "。执行系统消息中的 CONTRACT_EXECUTION_CHECKLIST。"
+                "只兑现分配给当前场景的 must_include / must_end_with 义务；"
+                "严格避免 must_exclude，且不可把未分配给本场的事件提前写出。"
+                "禁止项必须连同近似动作一起避免：不得以未说完的称呼、半句台词、将要发生的动作"
+                "或旁白暗示来触发被禁止的事件。"
+                "每项 must_include 都必须由正文中可定位的动作、对白或可见结果证明；"
+                "must_show_source 必须写出获得信息的来源；must_end_with 必须落在本场最后一段。",
+                "PREVIOUS_SCENE_OBLIGATIONS\n"
+                + json.dumps(previous_requirements, ensure_ascii=False)
+                + "\n这些义务已由前序场景处理，只能承接其后果，不得把同一事件重新演一遍。",
+                f"STYLE_REQUIREMENTS\n{style_requirements[:500]}",
                 "FORBIDDEN_ACTIONS\n"
                 + json.dumps(
                     forbidden_actions + (transition_constraints or []), ensure_ascii=False
                 ),
                 "OUTPUT_REQUIREMENTS\n"
                 + "\n".join(f"{index}. {item}" for index, item in enumerate(requirements, 1))
-                + f"\n目标长度约 {scene.target_length or 600} 字。只输出合法 JSON。",
+                + f"\n目标长度约 {scene.target_length or 600} 字。",
             ]
         )
-        draft = self._parse_model(self._chat(system, user), SceneDraft)
+        # Lower variance only for contract-bound scene drafting. This keeps the
+        # creative prose call singular while making the precomputed obligation
+        # checklist materially more reliable than a later rewrite loop.
+        raw = self._chat(system, user, temperature=0.25 if temperature is None else temperature)
+        draft = self._scene_draft_or_prose(raw, scene)
+        if draft is None:
+            # Truly empty or unusable output still deserves bounded structured repair.
+            draft = self._repair_scene_draft(raw, scene)
         if not draft.content.strip():
             raise ValueError("Writer returned empty scene content.")
         draft.content = draft.content.strip()
         return draft
+
+    def _scene_draft_or_prose(self, raw: str, scene: Beat) -> SceneDraft | None:
+        """Preserve usable prose when a provider misses only the JSON envelope.
+
+        Scene prose is the primary artifact. Re-asking a model to wrap valid
+        prose in a large state schema costs a full extra request per scene and
+        can introduce new facts. A conservative empty hand-off is safer than
+        treating a planned state as a fact from the prose.
+        """
+        try:
+            # Some providers emit valid JSON structure with typographic quotes
+            # (``{“content”: “...”}``). Treat it as JSON, not novel prose;
+            # otherwise a schema wrapper can leak into the chapter and poison
+            # every later contract check.
+            data = extract_json(self._normalize_json_quotes(raw))
+        except Exception:
+            recovered = self._recover_content_field(raw)
+            if recovered:
+                return SceneDraft(
+                    content=recovered,
+                    ending_state=self._conservative_scene_end_state(scene),
+                )
+            return self._fallback_scene_draft(self._strip_fence(raw), scene)
+        if not isinstance(data, dict):
+            return None
+        content = str(data.get("content") or data.get("prose") or "").strip()
+        if not content:
+            recovered = self._recover_content_field(raw)
+            if recovered:
+                return SceneDraft(
+                    content=recovered,
+                    ending_state=self._conservative_scene_end_state(scene),
+                )
+            return None
+        try:
+            ending_state = SceneEndState.model_validate(data.get("ending_state") or {})
+        except Exception:
+            ending_state = self._conservative_scene_end_state(scene)
+        return SceneDraft(content=content, ending_state=ending_state)
+
+    @classmethod
+    def _recover_content_field(cls, raw: str) -> str:
+        """Recover prose when only a trailing structured hand-off is malformed."""
+        text = cls._normalize_json_quotes(raw).strip()
+        field = re.search(r'"(?:content|prose)"\s*:\s*"', text, re.IGNORECASE)
+        if field is None:
+            return ""
+        tail = text[field.end() :]
+        boundary = re.search(
+            r'(?<!\\)"\s*,\s*"(?:ending_state|reason|source_content_digest|scene_index)"\s*:',
+            tail,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if boundary is not None:
+            value = tail[: boundary.start()]
+        else:
+            closing = re.search(r'(?<!\\)"\s*}\s*$', tail, re.DOTALL)
+            value = tail[: closing.start()] if closing is not None else tail
+        return value.replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\").strip()
+
+    @staticmethod
+    def _normalize_json_quotes(raw: str) -> str:
+        text = raw.strip()
+        if not text.startswith("{"):
+            return raw
+        return text.translate(
+            str.maketrans(
+                {
+                    "“": '"',
+                    "”": '"',
+                    "‘": "'",
+                    "’": "'",
+                }
+            )
+        )
+
+    def _repair_scene_draft(self, raw: str, scene: Beat) -> SceneDraft:
+        last_raw = raw
+        last_error: Exception = ValueError("Scene response contains no usable prose.")
+        for _ in range(self.structured_repair_attempts):
+            last_raw = self._repair_structured_output(
+                last_raw,
+                SceneDraft,
+                last_error,
+                is_list=False,
+            )
+            draft = self._scene_draft_or_prose(last_raw, scene)
+            if draft is not None:
+                return draft
+        raise last_error
+
+    @staticmethod
+    def _strip_fence(raw: str) -> str:
+        text = raw.strip()
+        if text.startswith("```") and text.endswith("```"):
+            return "\n".join(text.splitlines()[1:-1]).strip()
+        return text
+
+    def _fallback_scene_draft(self, content: str, scene: Beat) -> SceneDraft | None:
+        clean = content.strip()
+        if not clean or clean.startswith("{") or clean.startswith("["):
+            return None
+        return SceneDraft(content=clean, ending_state=self._conservative_scene_end_state(scene))
+
+    @staticmethod
+    def _conservative_scene_end_state(scene: Beat) -> SceneEndState:
+        return SceneEndState(characters_present=list(scene.participating_characters))
+
+    def reconcile_scene_end_state(
+        self,
+        *,
+        content: str,
+        scene: Beat,
+        previous_scene_end_state: SceneEndState | None,
+    ) -> SceneEndState:
+        """Re-extract the hand-off from final prose after any polishing pass.
+
+        The first SceneDraft state describes pre-polish prose.  A polisher may
+        change an action, object, or location, so the next scene must consume a
+        state grounded in the final text instead of that stale draft metadata.
+        """
+        system = (
+            "You extract a scene hand-off from final novel prose. Return only strict SceneEndState JSON. "
+            "Record only facts explicit in the final prose; do not infer events or preserve facts that the "
+            "prose removed. Keep uncertain fields empty."
+        )
+        user = (
+            "scene_end_state_reconcile\n"
+            f"scene={json.dumps(scene.model_dump(exclude={'content', 'end_state'}), ensure_ascii=False)}\n"
+            "previous_scene_end_state="
+            + json.dumps(
+                previous_scene_end_state.model_dump() if previous_scene_end_state else {},
+                ensure_ascii=False,
+            )
+            + f"\nfinal_content={content}\n只输出 SceneEndState JSON。"
+        )
+        return self._chat_model(system, user, SceneEndState)
 
     def write_chapter(
         self,

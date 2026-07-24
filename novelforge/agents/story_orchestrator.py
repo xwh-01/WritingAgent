@@ -77,8 +77,9 @@ class StoryOrchestratorAgent(BaseAgent):
             "tools": tool_catalog,
         }
         try:
-            plan = self._parse_model(
-                self._chat(system, json.dumps(payload, ensure_ascii=False, default=str)),
+            plan = self._chat_model(
+                system,
+                json.dumps(payload, ensure_ascii=False, default=str),
                 AgentPlan,
             )
             self._validate_tools(plan, tool_catalog)
@@ -99,8 +100,9 @@ class StoryOrchestratorAgent(BaseAgent):
             "tool_result": tool_result,
         }
         try:
-            return self._parse_model(
-                self._chat(system, json.dumps(payload, ensure_ascii=False, default=str)),
+            return self._chat_model(
+                system,
+                json.dumps(payload, ensure_ascii=False, default=str),
                 TaskEvaluation,
             )
         except Exception:

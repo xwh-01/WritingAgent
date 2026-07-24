@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from typing import Any
@@ -429,6 +430,77 @@ class MockLLMClient(LLMClient):
                     }
                 )
             return json.dumps(results, ensure_ascii=False)
+        if "unified_generation_review" in prompt:
+            obligations_match = re.search(
+                r"shared_contract_obligations=(.*?)\nshared_contract_evidence=",
+                prompt,
+                re.DOTALL,
+            )
+            try:
+                obligations = ast.literal_eval(obligations_match.group(1)) if obligations_match else []
+            except Exception:
+                obligations = []
+            content_match = re.search(r"\ncontent=(.*?)\nschema=", prompt, re.DOTALL)
+            evidence = content_match.group(1).strip()[:160] if content_match else "Mock review evidence"
+            return json.dumps(
+                {
+                    "scores": {
+                        "logic_consistency": 8.0,
+                        "character_fidelity": 8.0,
+                        "foreshadowing_handling": 8.0,
+                        "pacing": 8.0,
+                        "style_uniformity": 8.0,
+                    },
+                    "quality_issues": [],
+                    "quality_comment": "Mock unified review passed.",
+                    "continuity_passed": True,
+                    "continuity_risk_score": 1.0,
+                    "continuity_issues": [],
+                    "continuity_summary": "Mock unified continuity passed.",
+                    "character_risks": [],
+                    "contract_evidence": [
+                        {
+                            "obligation_id": item.get("id", ""),
+                            "passed": True,
+                            "confidence": 0.9,
+                            "evidence": evidence,
+                            "paragraph_range": "段落1",
+                        }
+                        for item in obligations
+                        if item.get("id")
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        if "scene_candidate_selection" in prompt:
+            match = re.search(r"candidates=(.*?)\nReturn candidate_ids", prompt, re.DOTALL)
+            try:
+                candidates = json.loads(match.group(1)) if match else {}
+            except Exception:
+                candidates = {}
+            # The composer submits the source candidate first and expressive
+            # alternatives afterwards. Prefer an alternative without tying the
+            # deterministic mock to localized prose markers.
+            selected = next(reversed(candidates), "")
+            return json.dumps(
+                {
+                    "selected_id": selected,
+                    "reason": "动作、感官细节和结尾压力更具体。",
+                    "scores": {key: (8.8 if key == selected else 7.8) for key in candidates},
+                },
+                ensure_ascii=False,
+            )
+        if "continuity_patch_audit" in prompt:
+            return json.dumps(
+                {
+                    "chapter_index": 1,
+                    "risk_score": 1.0,
+                    "passed": True,
+                    "issues": [],
+                    "summary": "Mock local patch continuity passed.",
+                },
+                ensure_ascii=False,
+            )
         if "quality_scorecard_review" in prompt:
             improved = "【修订稿】" in prompt or "revise_chapter_quality" in prompt
             # ── content-sensitive scoring ──
@@ -541,15 +613,96 @@ class MockLLMClient(LLMClient):
                 },
                 ensure_ascii=False,
             )
-        if "CURRENT_SCENE" in prompt and "PREVIOUS_SCENE_END_STATE" in prompt:
+        if "scene_end_state_reconcile" in prompt:
             scene_match = re.search(r'"scene_index"\s*:\s*(\d+)', prompt)
             scene_index = int(scene_match.group(1)) if scene_match else 1
+            return json.dumps(
+                {
+                    "characters_present": ["主角"],
+                    "character_state_changes": {"主角": "已采取行动并承担后果"},
+                    "relationship_changes": [],
+                    "location_changes": {"主角": f"场景{scene_index}终点"},
+                    "time_changes": "",
+                    "knowledge_gained": {"主角": [f"线索{scene_index}"]},
+                    "items_gained": {},
+                    "items_lost": {},
+                    "injuries_or_conditions": {},
+                    "decisions": {"主角": "继续追查"},
+                    "promises": [],
+                    "questions_created": ["线索指向何处"],
+                    "questions_resolved": [],
+                    "ending_state": {"scene_completed": scene_index, "grounded_in": "polished"},
+                },
+                ensure_ascii=False,
+            )
+        if "scene_contract_repair_patch" in prompt:
+            scene_match = re.search(r"scene=(.*?)\nfailed_evidence=", prompt, re.DOTALL)
+            try:
+                scene = json.loads(scene_match.group(1)) if scene_match else {}
+            except Exception:
+                scene = {}
+            content = str(scene.get("content") or "").strip()
+            return json.dumps(
+                {
+                    "scene_index": scene.get("scene_index"),
+                    "content": "【合同修补】" + content,
+                    "ending_state": {"characters_present": scene.get("participating_characters") or []},
+                    "reason": "补足已引用的合同义务。",
+                },
+                ensure_ascii=False,
+            )
+        if "scene_contract_repair" in prompt:
+            obligations_match = re.search(
+                r"scene_obligations=(.*?)\nfailed_evidence=", prompt, re.DOTALL
+            )
+            source_match = re.search(r"scene_content=(.*?)\nOutput only", prompt, re.DOTALL)
+            obligations = (
+                json.loads(obligations_match.group(1)) if obligations_match else []
+            )
+            source = source_match.group(1).strip() if source_match else ""
+            required = [
+                str(item.get("requirement", "")).strip()
+                for item in obligations
+                if item.get("mode") in {"must_include", "must_end_with", "must_show_source"}
+            ]
+            additions = "\n".join(item for item in required if item)
+            return "\n\n".join(part for part in (source, additions) if part)
+        if "scene_revision_proposal" in prompt:
+            match = re.search(r"scenes=(.*?)\nOutput only", prompt, re.DOTALL)
+            try:
+                scenes = json.loads(match.group(1)) if match else []
+            except Exception:
+                scenes = []
+            return json.dumps(
+                [
+                    {
+                        "scene_index": item.get("scene_index"),
+                        "content": "【修订场景】" + str(item.get("content") or ""),
+                        "reason": "加强冲突与人物选择。",
+                    }
+                    for item in scenes
+                    if item.get("scene_index") and str(item.get("content") or "").strip()
+                ],
+                ensure_ascii=False,
+            )
+        if (
+            ("CURRENT_SCENE" in prompt or "SCENE_BRIEF" in prompt)
+            and "PREVIOUS_SCENE_END_STATE" in prompt
+        ):
+            scene_match = re.search(r'"(?:scene_index|index)"\s*:\s*(\d+)', prompt)
+            scene_index = int(scene_match.group(1)) if scene_match else 1
+            variant_suffix = (
+                "【表现探索】雨水沿着门锁滑落，他把决定压进一次更清晰的呼吸里。"
+                if "VARIANT_FOCUS" in prompt
+                else ""
+            )
             return json.dumps(
                 {
                     "content": (
                         f"场景{scene_index}中，主角沿着潮湿的走廊逼近目标。阻碍突然出现，"
                         "他没有退后，而是主动改变路线并承担暴露行踪的代价。门锁在身后合拢，"
                         "新的线索已经落入手中，局面也因此发生了具体变化。"
+                        + variant_suffix
                     ),
                     "ending_state": {
                         "characters_present": ["主角"],

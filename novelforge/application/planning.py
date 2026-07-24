@@ -19,7 +19,14 @@ from novelforge.domain import (
 
 
 class PlannerPort(Protocol):
-    def generate_outline(self, premise: str, num_chapters: int) -> list[ChapterOutline]: ...
+    def generate_outline(
+        self,
+        premise: str,
+        num_chapters: int,
+        *,
+        story: Story | None = None,
+        start_chapter: int = 1,
+    ) -> list[ChapterOutline]: ...
 
     def generate_chapter_contract(
         self,
@@ -93,14 +100,24 @@ class StoryPlanningService:
                     "Cannot replace the outline after prose has been committed. "
                     "Create a new story or edit individual contracts instead."
                 )
-            outlines = self.planner.generate_outline(working.premise, target_count)
+            outlines = self.planner.generate_outline(
+                working.premise,
+                target_count,
+                story=working,
+                start_chapter=1,
+            )
             self.designs.set_outlines(working, self._number(outlines, start=1))
         else:
-            existing = len(working.design.outlines)
+            existing = max(
+                (item.chapter_index for item in working.design.outlines),
+                default=0,
+            )
             if existing < target_count:
                 generated = self.planner.generate_outline(
                     working.premise,
                     target_count - existing,
+                    story=working,
+                    start_chapter=existing + 1,
                 )
                 self.designs.append_outlines(
                     working,

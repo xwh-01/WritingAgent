@@ -6,12 +6,17 @@ import json
 from typing import Any
 
 from novelforge.agents.base import BaseAgent
+from novelforge.core.utils import extract_json
 from novelforge.domain import (
     ChapterOutline,
     Character,
+    ContinuityAuditReport,
+    GenerationReviewPayload,
     QualityReviewReport,
     ReviewReport,
+    SceneCandidateSelection,
     Story,
+    UnifiedReviewBundle,
 )
 
 
@@ -44,7 +49,7 @@ class CriticAgent(BaseAgent):
             f"正文: {chapter_content[:12000]}\n只输出 JSON。"
         )
         try:
-            return self._parse_model(self._chat(system, user), ReviewReport)
+            return self._chat_model(system, user, ReviewReport)
         except Exception:
             return ReviewReport(
                 pacing_issues=["未能解析模型审查结果，请人工复核。"],
@@ -90,7 +95,7 @@ class CriticAgent(BaseAgent):
             f"额外审查上下文: {extra_context[:4000]}"
         )
         try:
-            report = self._parse_model(self._chat(system, user), QualityReviewReport)
+            report = self._chat_model(system, user, QualityReviewReport)
             report.scores.logic_consistency = self._clamp(report.scores.logic_consistency)
             report.scores.character_fidelity = self._clamp(report.scores.character_fidelity)
             report.scores.foreshadowing_handling = self._clamp(report.scores.foreshadowing_handling)
@@ -99,6 +104,154 @@ class CriticAgent(BaseAgent):
             return report
         except Exception:
             return self._fallback_quality_review(content, chapter_outline, story)
+
+    def select_scene_candidate(
+        self,
+        *,
+        scene: Any,
+        candidates: dict[str, str],
+        style_guide: str = "",
+        context: str = "",
+    ) -> SceneCandidateSelection | None:
+        """Blindly choose the strongest already-contract-safe scene candidate.
+
+        Candidate IDs are content hashes rather than labels such as "original"
+        or "rewrite", preventing the selector from inheriting an edit-order
+        preference. Contract validation happens before this call.
+        """
+        if len(candidates) < 2:
+            return None
+        ordered = {key: candidates[key] for key in sorted(candidates)}
+        system = (
+            "You are an independent fiction quality selector. Every candidate has already passed hard "
+            "contract validation. Choose the scene with the strongest concrete action, character fidelity, "
+            "subtext, sensory specificity, pacing, and ending pressure. Do not reward extra plot events or "
+            "new facts. Return only JSON matching SceneCandidateSelection."
+        )
+        user = (
+            "scene_candidate_selection\n"
+            f"scene_brief={json.dumps(scene.model_dump(exclude={'content', 'end_state'}), ensure_ascii=False)}\n"
+            f"style_guide={style_guide[:500]}\n"
+            f"local_context={context[:1800]}\n"
+            f"candidates={json.dumps(ordered, ensure_ascii=False)}\n"
+            "Return candidate_ids exactly as provided, selected_id as one provided ID, a concise reason, "
+            "and optional 0-10 scores keyed by candidate ID."
+        )
+        try:
+            raw = self._chat(system, user, temperature=0.1, max_tokens=700)
+            payload = extract_json(raw)
+            if not isinstance(payload, dict):
+                return None
+            # These are orchestration metadata, not facts the selector needs
+            # to repeat in its concise response.
+            payload["scene_index"] = scene.scene_index
+            payload["candidate_ids"] = list(ordered)
+            selection = SceneCandidateSelection.model_validate(payload)
+        except Exception:
+            return None
+        if selection.selected_id not in ordered:
+            return None
+        return selection
+
+    def review_generation_bundle(
+        self,
+        content: str,
+        chapter_outline: ChapterOutline,
+        story: Story,
+        shared_context: str = "",
+    ) -> UnifiedReviewBundle | None:
+        """Review craft, continuity, and character risk in one compact provider call."""
+        system = (
+            "You are the single review pass for a long-form novel chapter. Assess quality, continuity, character "
+            "state, and the semantic contract obligations from the same evidence packet. Do not invent contract failures. "
+            "Every returned failed or passed obligation needs a cited text span and paragraph range. For must-happen "
+            "obligations, pass only when the text explicitly establishes the named actor, indispensable object or "
+            "destination, and completed causal action; generic stand-ins, intention, or implied outcomes are not evidence. "
+            "The packet omits "
+            "deterministic exclusion and knowledge checks because they are enforced locally; do not infer "
+            "additional contract failures for omitted items. Mark a continuity issue "
+            "high only for a direct, cited contradiction against the supplied story packet; missing preference, "
+            "speculation, or a fact already assessed as a contract obligation is advisory, not high. Return strict JSON."
+        )
+        user = (
+            "unified_generation_review\n"
+            f"outline={json.dumps(chapter_outline.model_dump(), ensure_ascii=False)}\n"
+            f"story_snapshot={self._get_knowledge_snapshot(story)}\n"
+            f"shared_review_packet={shared_context[:5000]}\n"
+            f"content={content[:12000]}\n"
+            "For every id in shared_contract_obligations, return one contract_evidence item. "
+            "A pass is valid only with confidence >= 0.7 plus an exact evidence span and paragraph_range; "
+            "return passed=false when the obligation is absent or violated. Keep evidence under 24 words, comments "
+            "under 80 words, and omit all empty optional fields. Output only scores, continuity_passed, "
+            "continuity_risk_score, and contract_evidence unless a cited issue or summary is non-empty.\n"
+            "schema={\"scores\":{\"logic_consistency\":0-10,\"character_fidelity\":0-10,"
+            "\"foreshadowing_handling\":0-10,\"pacing\":0-10,\"style_uniformity\":0-10},"
+            "\"continuity_passed\":true,\"continuity_risk_score\":0-10,"
+            "\"contract_evidence\":[{\"obligation_id\":\"id\",\"passed\":true,"
+            "\"confidence\":0.7-1,\"evidence\":\"exact span\",\"paragraph_range\":\"paragraph N\"}]}"
+        )
+        raw = self._chat(system, user, temperature=0.1, max_tokens=1800)
+        payload = self._parse_generation_payload(raw)
+        if payload is None:
+            return None
+        bundle = UnifiedReviewBundle(
+            quality=QualityReviewReport(
+                scores=payload.scores,
+                issues=payload.quality_issues,
+                overall_comment=payload.quality_comment,
+            ),
+            continuity=ContinuityAuditReport(
+                chapter_index=chapter_outline.chapter_index,
+                risk_score=payload.continuity_risk_score,
+                passed=payload.continuity_passed,
+                issues=payload.continuity_issues,
+                summary=payload.continuity_summary,
+                audit_method="unified_generation_review",
+            ),
+            character_risks=payload.character_risks,
+            contract_evidence=payload.contract_evidence,
+        )
+        bundle.continuity.chapter_index = chapter_outline.chapter_index
+        bundle.continuity.issues.extend(bundle.character_risks)
+        bundle.continuity.passed = bundle.continuity.passed and not any(
+            item.severity == "high" for item in bundle.continuity.issues
+        )
+        bundle.quality.scores.logic_consistency = self._clamp(bundle.quality.scores.logic_consistency)
+        bundle.quality.scores.character_fidelity = self._clamp(bundle.quality.scores.character_fidelity)
+        bundle.quality.scores.foreshadowing_handling = self._clamp(
+            bundle.quality.scores.foreshadowing_handling
+        )
+        bundle.quality.scores.pacing = self._clamp(bundle.quality.scores.pacing)
+        bundle.quality.scores.style_uniformity = self._clamp(bundle.quality.scores.style_uniformity)
+        return bundle
+
+    @staticmethod
+    def _parse_generation_payload(raw: str) -> GenerationReviewPayload | None:
+        """Parse the compact payload, accepting the prior wire shape during rollout."""
+        try:
+            data = extract_json(raw)
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        if "quality" in data or "continuity" in data:
+            quality = data.get("quality") if isinstance(data.get("quality"), dict) else {}
+            continuity = data.get("continuity") if isinstance(data.get("continuity"), dict) else {}
+            data = {
+                "scores": quality.get("scores", {}),
+                "quality_issues": quality.get("issues", []),
+                "quality_comment": quality.get("overall_comment", ""),
+                "continuity_passed": continuity.get("passed", True),
+                "continuity_risk_score": continuity.get("risk_score", 0.0),
+                "continuity_issues": continuity.get("issues", []),
+                "continuity_summary": continuity.get("summary", ""),
+                "character_risks": data.get("character_risks", []),
+                "contract_evidence": data.get("contract_evidence", []),
+            }
+        try:
+            return GenerationReviewPayload.model_validate(data)
+        except Exception:
+            return None
 
     def _get_knowledge_snapshot(self, story: Story) -> str:
         """收集故事全局内存快照：伏笔、因果事件、角色状态与章节摘要。"""

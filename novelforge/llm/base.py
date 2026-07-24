@@ -3,7 +3,25 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass(frozen=True)
+class LLMResponse:
+    """Provider-neutral response metadata used by real evaluations and tracing."""
+
+    content: str
+    provider: str = "unknown"
+    model: str = "unknown"
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    finish_reason: str | None = None
+    request_id: str | None = None
+    latency_ms: int | None = None
+    attempts: int = 1
+    operation: str = "unknown"
 
 
 class LLMClient(ABC):
@@ -12,3 +30,9 @@ class LLMClient(ABC):
     @abstractmethod
     def chat_completion(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         """Return the assistant content for a chat completion."""
+
+    def chat_completion_result(
+        self, messages: list[dict[str, str]], **kwargs: Any
+    ) -> LLMResponse:
+        """Return content plus metadata, with compatibility for simple clients."""
+        return LLMResponse(content=self.chat_completion(messages, **kwargs))

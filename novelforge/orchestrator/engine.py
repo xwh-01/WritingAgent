@@ -55,7 +55,7 @@ from novelforge.longform.knowledge_system import StoryKnowledgeSystem
 from novelforge.orchestrator.chapter_composer import ChapterComposer
 from novelforge.orchestrator.runtime import StoryAgentRuntime
 from novelforge.orchestrator.tools import StoryAgentToolbox
-from novelforge.validation import ChapterContractValidator
+from novelforge.validation import ChapterContractValidator, ContractObligationCompiler
 
 
 class NovelForgeEngine:
@@ -87,6 +87,7 @@ class NovelForgeEngine:
             self.config.story.max_context_tokens,
             self.knowledge_system,
             retrieval_config=self.config.retrieval,
+            graph_store=self.graph_store,
         )
 
         self.planner = PlannerAgent(self.llm)
@@ -97,10 +98,14 @@ class NovelForgeEngine:
         self.continuity_auditor = ContinuityAuditorAgent(self.llm)
         self.character_auditor = CharacterArcAuditorAgent(self.llm)
         self.contract_validator = ChapterContractValidator(self.llm)
+        self.obligation_compiler = ContractObligationCompiler()
         self.chapter_composer = ChapterComposer(
             planner=self.planner,
             writer=self.writer,
             target_length=self.config.story.prose_target_words,
+            scene_context_builder=self.writing_context,
+            obligation_compiler=self.obligation_compiler,
+            editor=self.editor,
         )
 
         self.designs = DesignService()
@@ -114,6 +119,15 @@ class NovelForgeEngine:
             max_repairs=self.config.generation.max_repairs,
             require_contract_pass=self.config.generation.require_contract_pass,
             require_continuity_pass=self.config.generation.require_continuity_pass,
+            max_generation_calls=self.config.generation.max_generation_calls,
+            max_generation_tokens=self.config.generation.max_generation_tokens,
+            quality_search_enabled=self.config.generation.quality_search_enabled,
+            quality_search_max_scenes=self.config.generation.quality_search_max_scenes,
+            quality_search_candidates=self.config.generation.quality_search_candidates,
+            # Quality and continuity findings remain visible in the report, but
+            # only evidence-backed contract failures may automatically mutate
+            # a generated chapter.
+            auto_repair_review_issues=False,
         )
         self.generation = ChapterGenerationPipeline(
             composer=self.chapter_composer,
@@ -123,6 +137,7 @@ class NovelForgeEngine:
                 continuity=self.continuity_auditor,
                 critic=self.critic,
                 policy=policy,
+                obligations=self.obligation_compiler,
             ),
             editor=self.editor,
         )

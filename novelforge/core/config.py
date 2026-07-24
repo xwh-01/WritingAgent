@@ -53,6 +53,11 @@ class GenerationConfig(BaseModel):
     max_repairs: int = Field(default=2, ge=0, le=10)
     require_contract_pass: bool = True
     require_continuity_pass: bool = True
+    max_generation_calls: int = Field(default=16, ge=1, le=50)
+    max_generation_tokens: int = Field(default=42_000, ge=1_000, le=200_000)
+    quality_search_enabled: bool = True
+    quality_search_max_scenes: int = Field(default=1, ge=0, le=5)
+    quality_search_candidates: int = Field(default=2, ge=2, le=4)
 
 
 class RetrievalConfig(BaseModel):

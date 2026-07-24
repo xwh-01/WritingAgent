@@ -345,16 +345,25 @@ class StoryAgentToolbox:
             self.engine.request_review(chapter_index)
         source_revision = self.engine.current_story.revision
         proposal = self.engine.create_revision_proposal(chapter_index, instruction)
+        source_chapter = self.engine.current_story.require_chapter(chapter_index)
+        if proposal.scene_patches:
+            preview = self.engine.generation.apply_scene_patches(
+                source_chapter,
+                proposal.scene_patches,
+            )
+            preview.status = "revised"
+        else:
+            preview = source_chapter.model_copy(
+                deep=True,
+                update={"content": proposal.proposed_content, "status": "revised"},
+            )
         candidate = ChapterCandidateRecord(
             run_id=run.id,
             story_id=self.engine.current_story.id,
             chapter_index=chapter_index,
             source_story_revision=source_revision,
             status=CandidateStatus.ACCEPTED if proposal.eligible else CandidateStatus.REJECTED,
-            chapter=self.engine.current_story.require_chapter(chapter_index).model_copy(
-                deep=True,
-                update={"content": proposal.proposed_content},
-            ),
+            chapter=preview,
         )
         self.engine.agent_run_repository.save_candidate(candidate)
         self.engine.agent_run_repository.add_evaluation(

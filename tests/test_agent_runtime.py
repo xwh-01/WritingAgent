@@ -67,12 +67,16 @@ def test_revision_waits_for_approval_outside_story_aggregate(tmp_path) -> None:
         details = engine.get_agent_run_details(str(run.id))
         result = details["steps"][-1]["output_payload"]["tool_result"]
         proposal_id = result["data"]["proposal_id"]
+        proposal = engine.get_revision_proposal(proposal_id)
+        assert proposal is not None
+        assert proposal.scene_patches
         assert engine.current_story.require_chapter(1).version == original.version
         assert "revision_proposals" not in engine.current_story.quality.model_dump()
 
         revised = engine.accept_revision_proposal(proposal_id)
         resumed = engine.resume_agent_run(str(run.id))
         assert revised.version == original.version + 1
+        assert revised.scene_content_is_current()
         assert resumed.status is AgentRunStatus.COMPLETED
         assert engine.agent_run_repository.load_candidate(result["candidate_id"]).status is (
             CandidateStatus.COMMITTED
